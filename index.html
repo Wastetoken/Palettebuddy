@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en" class="antialiased">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CHROMA-SYS | The Analog Color Engine</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Space Grotesk', 'sans-serif'],
+              mono: ['JetBrains Mono', 'monospace'],
+            },
+            colors: {
+              'metal-light': '#f0f0f3',
+              'metal-dark': '#d1d1d6',
+              'panel-bg': '#141414',
+              'led-active': '#4aff4a',
+              'led-off': '#1a331a'
+            },
+            backgroundImage: {
+              'brushed': 'repeating-linear-gradient(90deg, transparent 0, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px)',
+            }
+          }
+        }
+      }
+    </script>
+    
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <!-- Global Styles for specific complex properties -->
+    <style>
+      :root {
+        --depth-shadow: 0 20px 50px -10px rgba(0,0,0,0.6);
+      }
+      body {
+        background-color: #0a0a0a;
+        color: #e5e5e5;
+        overflow-x: hidden;
+      }
+      /* Only hide cursor on larger screens where we show the custom one */
+      @media (min-width: 768px) {
+        body {
+          cursor: none;
+        }
+      }
+      
+      /* Hide Scrollbar */
+      .hide-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .hide-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+      .perspective-1000 {
+        perspective: 1000px;
+      }
+      .perspective-card {
+        perspective: 800px;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "@studio-freight/lenis": "https://esm.sh/@studio-freight/lenis@^1.0.42",
+    "gsap/": "https://esm.sh/gsap@^3.14.2/",
+    "gsap": "https://esm.sh/gsap@^3.14.2"
+  }
+}
+</script>
+</head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
