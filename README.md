@@ -89,4 +89,4 @@ Start the development server.
 code
 Bash
 npm run dev
-Open your browser to http://localhost:5173.
+Open your browser to http://localhost:5173. 
