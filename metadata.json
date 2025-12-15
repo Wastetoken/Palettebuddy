@@ -1,5 +1,7 @@
 {
   "name": "CHROMA-SYS | Analog Color Engine",
   "description": "A high-fidelity analog synthesizer interface for exploring color theory, featuring realistic physics-based knobs, dynamic lighting, and a tactile industrial design.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "microphone"
+  ]
 }

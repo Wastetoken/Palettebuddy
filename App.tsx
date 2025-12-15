@@ -1,291 +1,546 @@
-import React, { useState, useEffect, useCallback } from 'react';
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Lenis from '@studio-freight/lenis';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
 import { Device } from './components/Device';
+import { FluxDevice } from './components/FluxDevice';
 import { Cursor } from './components/ui/Cursor';
-import { generateImage, triggerDownload, DOWNLOAD_SIZES, DownloadSize } from './utils/canvas';
+import { generateImage, generateFluxImage, triggerDownload, renderFluxToCanvas, DOWNLOAD_SIZES, DownloadSize, getNoiseSvgDataUri, NoiseType, FluxPattern } from './utils/canvas';
+import { playClick, playSnap, playSwitch } from './utils/audio';
 
 gsap.registerPlugin(ScrollTrigger);
 
 const BLEND_MODES = ['overlay', 'soft-light', 'multiply', 'screen', 'difference'];
+const FLUX_PATTERNS: FluxPattern[] = ['wave', 'interference', 'ripple', 'prism', 'turbulence', 'glitch'];
+
+type SystemMode = 'chroma' | 'flux';
+
+const encodeSignal = (data: any) => {
+  try { return btoa(JSON.stringify(data)); } catch { return ""; }
+};
+
+const decodeSignal = (str: string) => {
+  try { return JSON.parse(atob(str)); } catch { return null; }
+};
 
 export default function App() {
+  const [systemMode, setSystemMode] = useState<SystemMode>('chroma');
+
+  // --- CHROMA STATE ---
   const [hue, setHue] = useState(280);
   const [sat, setSat] = useState(50);
   const [lum, setLum] = useState(50);
-  
-  // Texture State
-  const [noise, setNoise] = useState(5); // 0 - 100
-  const [vignette, setVignette] = useState(0); // 0 - 100
+  const [hueB, setHueB] = useState(240);
+  const [satB, setSatB] = useState(60);
+  const [lumB, setLumB] = useState(30);
+  const [gradientType, setGradientType] = useState<'none' | 'linear' | 'radial'>('none');
+  const [gradientAngle, setGradientAngle] = useState(135);
+  const [noise, setNoise] = useState(5);
+  const [fineGrain, setFineGrain] = useState(0); 
+  const [smudgeActive, setSmudgeActive] = useState(false); 
+  const [smudgeFactor, setSmudgeFactor] = useState(50); 
+  const [vignette, setVignette] = useState(0);
+  const [noiseType, setNoiseType] = useState<NoiseType>('fractalNoise');
+  const [noiseFreq, setNoiseFreq] = useState(0.65);
+  const [noiseOctaves, setNoiseOctaves] = useState(3);
   const [blendMode, setBlendMode] = useState('overlay');
   
+  const [bgImage, setBgImage] = useState<string | null>(null);
+  const [imgDims, setImgDims] = useState<{w:number, h:number} | null>(null);
+
+  // --- FLUX STATE ---
+  const [fluxHue, setFluxHue] = useState(210);
+  const [fluxSpectra, setFluxSpectra] = useState(50);
+  const [fluxExposure, setFluxExposure] = useState(50); 
+  const [fluxDistortion, setFluxDistortion] = useState(30);
+  const [fluxGrain, setFluxGrain] = useState(40);
+  const [fluxFineGrain, setFluxFineGrain] = useState(0); 
+  const [fluxSmudgeActive, setFluxSmudgeActive] = useState(false); 
+  const [fluxSmudgeFactor, setFluxSmudgeFactor] = useState(50); 
+  const [fluxIso, setFluxIso] = useState(60);
+  const [fluxSeed, setFluxSeed] = useState(12345);
+  const [fluxPattern, setFluxPattern] = useState<FluxPattern>('wave');
+
   const [locked, setLocked] = useState(false);
+  const [audioSync, setAudioSync] = useState(false);
   
-  // Export Modal State
   const [showExport, setShowExport] = useState(false);
+  const [showCode, setShowCode] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [shareLabel, setShareLabel] = useState("SHARE SIGNAL");
+  const [activeCanvasDims, setActiveCanvasDims] = useState<{w: number, h: number} | null>(null);
 
-  // Initialize Lenis Smooth Scroll
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const rafRef = useRef<number | null>(null);
+
+  // Refs for rendering
+  const fluxCanvasRef = useRef<HTMLCanvasElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+
+  // --- DIMENSION CALCULATION LOGIC ---
+  // Calculates the 'Active Canvas' size so effects only apply to the image area, not the black bars.
+  const updateCanvasDims = useCallback(() => {
+    if (!viewportRef.current) return;
+    const viewport = viewportRef.current.getBoundingClientRect();
+    
+    // Safety check for 0 dims (hidden)
+    if (viewport.width === 0 || viewport.height === 0) return;
+
+    if (systemMode === 'chroma' && bgImage && imgDims) {
+        // CONTAIN LOGIC: Fit image aspect ratio into viewport
+        const imgRatio = imgDims.w / imgDims.h;
+        const viewRatio = viewport.width / viewport.height;
+        
+        let w, h;
+        if (imgRatio > viewRatio) {
+            // Image is wider than viewport -> Constraint by width
+            w = viewport.width;
+            h = viewport.width / imgRatio;
+        } else {
+            // Image is taller -> Constraint by height
+            h = viewport.height;
+            w = viewport.height * imgRatio;
+        }
+        setActiveCanvasDims({ w, h });
+    } else {
+        // Fill viewport for Flux or pure generative Chroma
+        setActiveCanvasDims({ w: viewport.width, h: viewport.height });
+    }
+  }, [systemMode, bgImage, imgDims]);
+
   useEffect(() => {
-    const lenis = new Lenis({
-      duration: 1.2,
-      easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
-      direction: 'vertical',
-      smooth: true,
-    });
+    window.addEventListener('resize', updateCanvasDims);
+    updateCanvasDims();
+    return () => window.removeEventListener('resize', updateCanvasDims);
+  }, [updateCanvasDims]);
 
-    const raf = (time: number) => {
-      lenis.raf(time);
-      requestAnimationFrame(raf);
-    };
+  // Sync state from URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const signal = params.get('signal');
+    if (signal) {
+        const d = decodeSignal(signal);
+        if (d) {
+            if (d.m) setSystemMode(d.m);
+            if (d.h !== undefined) setHue(d.h);
+            if (d.s !== undefined) setSat(d.s);
+            if (d.l !== undefined) setLum(d.l);
+            if (d.hb !== undefined) setHueB(d.hb);
+            if (d.sb !== undefined) setSatB(d.sb);
+            if (d.lb !== undefined) setLumB(d.lb);
+            if (d.gt !== undefined) setGradientType(d.gt);
+            if (d.ga !== undefined) setGradientAngle(d.ga);
+            if (d.n !== undefined) setNoise(d.n);
+            if (d.fg !== undefined) setFineGrain(d.fg);
+            if (d.sa !== undefined) setSmudgeActive(d.sa);
+            if (d.sf !== undefined) setSmudgeFactor(d.sf);
+            if (d.v !== undefined) setVignette(d.v);
+            if (d.nt !== undefined) setNoiseType(d.nt);
+            if (d.bm !== undefined) setBlendMode(d.bm);
+            
+            if (d.fh !== undefined) setFluxHue(d.fh);
+            if (d.fs !== undefined) setFluxSpectra(d.fs);
+            if (d.fe !== undefined) setFluxExposure(d.fe);
+            if (d.fd !== undefined) setFluxDistortion(d.fd);
+            if (d.fgr !== undefined) setFluxGrain(d.fgr);
+            if (d.ffg !== undefined) setFluxFineGrain(d.ffg);
+            if (d.fsa !== undefined) setFluxSmudgeActive(d.fsa);
+            if (d.fsf !== undefined) setFluxSmudgeFactor(d.fsf);
+            if (d.fi !== undefined) setFluxIso(d.fi);
+            if (d.fseed !== undefined) setFluxSeed(d.fseed);
+            if (d.fp !== undefined) setFluxPattern(d.fp);
+        }
+    }
+  }, []);
+
+  // Audio Sync Logic
+  const toggleAudioSync = async () => {
+    if (audioSync) {
+        setAudioSync(false);
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        if (audioContextRef.current) audioContextRef.current.close();
+        audioContextRef.current = null;
+        return;
+    }
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const analyser = audioCtx.createAnalyser();
+        const source = audioCtx.createMediaStreamSource(stream);
+        source.connect(analyser);
+        analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.8;
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const timeArray = new Uint8Array(analyser.frequencyBinCount);
+        audioContextRef.current = audioCtx; analyserRef.current = analyser;
+        setAudioSync(true); playSwitch();
+        
+        const analyze = () => {
+            if (!analyser) return;
+            analyser.getByteFrequencyData(dataArray); analyser.getByteTimeDomainData(timeArray);
+            rafRef.current = requestAnimationFrame(analyze);
+        };
+        analyze();
+    } catch (err) { console.error(err); setAudioSync(false); }
+  };
+
+  const handleShowCode = () => {
+      wrapWithSound(() => {
+          if (audioSync) toggleAudioSync();
+          setShowCode(true);
+      }, playClick)();
+  };
+
+  // URL State Sync
+  useEffect(() => {
+    const timer = setTimeout(() => {
+        const payload = {
+            m: systemMode,
+            h: hue, s: sat, l: lum,
+            hb: hueB, sb: satB, lb: lumB,
+            gt: gradientType, ga: gradientAngle,
+            n: noise, fg: fineGrain, sa: smudgeActive, sf: smudgeFactor, v: vignette,
+            nt: noiseType, nf: noiseFreq, no: noiseOctaves, bm: blendMode,
+            fh: fluxHue, fs: fluxSpectra, fe: fluxExposure,
+            fd: fluxDistortion, fgr: fluxGrain, ffg: fluxFineGrain, fsa: fluxSmudgeActive, fsf: fluxSmudgeFactor,
+            fi: fluxIso, fseed: fluxSeed, fp: fluxPattern
+        };
+        const signal = encodeSignal(payload);
+        try {
+            const url = new URL(window.location.href);
+            url.searchParams.set('signal', signal);
+            window.history.replaceState({}, '', url.toString());
+        } catch (e) {}
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [
+    systemMode, hue, sat, lum, hueB, satB, lumB, gradientType, gradientAngle, 
+    noise, fineGrain, smudgeActive, smudgeFactor, vignette, noiseType, noiseFreq, noiseOctaves, blendMode,
+    fluxHue, fluxSpectra, fluxExposure, fluxDistortion, fluxGrain, fluxFineGrain, fluxSmudgeActive, fluxSmudgeFactor, fluxIso, fluxSeed, fluxPattern
+  ]);
+
+  // Flux Rendering Loop
+  const renderFlux = useCallback(() => {
+    if (systemMode === 'flux' && fluxCanvasRef.current && activeCanvasDims) {
+        const canvas = fluxCanvasRef.current;
+        const dpr = window.devicePixelRatio || 1;
+        
+        // Resize canvas to match the ACTIVE CANVAS AREA (not just viewport)
+        // Ensure width/height are integer physical pixels
+        const targetWidth = Math.floor(activeCanvasDims.w * dpr);
+        const targetHeight = Math.floor(activeCanvasDims.h * dpr);
+
+        if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+             canvas.width = targetWidth;
+             canvas.height = targetHeight;
+        }
+
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            // FIX: Reset transform to identity for pixel manipulation.
+            // getImageData/putImageData ignore transformations and work on physical pixels.
+            // Previous scaling caused effects to clip to the top-left logical viewport area.
+            ctx.setTransform(1, 0, 0, 1, 0, 0); 
+            renderFluxToCanvas(ctx, canvas.width, canvas.height, fluxHue, fluxSpectra, fluxExposure, fluxDistortion, fluxIso, fluxSeed, fluxPattern, fluxSmudgeActive, fluxSmudgeFactor);
+        }
+    }
+  }, [systemMode, activeCanvasDims, fluxHue, fluxSpectra, fluxExposure, fluxDistortion, fluxIso, fluxSeed, fluxPattern, fluxSmudgeActive, fluxSmudgeFactor]);
+
+  useEffect(() => {
+      renderFlux();
+      const ro = new ResizeObserver(() => requestAnimationFrame(renderFlux));
+      if (viewportRef.current) ro.observe(viewportRef.current);
+      return () => ro.disconnect();
+  }, [renderFlux]);
+
+  // Smooth Scroll (Lenis) - Applied to body/main for smooth sidebar scrolling if needed
+  useEffect(() => {
+    const lenis = new Lenis({ duration: 1.2, easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)), direction: 'vertical', smooth: true });
+    const raf = (time: number) => { lenis.raf(time); requestAnimationFrame(raf); };
     requestAnimationFrame(raf);
-
     return () => lenis.destroy();
   }, []);
 
-  // Animations on scroll
-  useEffect(() => {
-    gsap.utils.toArray('.reveal-text').forEach((el: any) => {
-      gsap.from(el, {
-        scrollTrigger: { trigger: el, start: "top 80%" },
-        y: 50, opacity: 0, duration: 1, ease: "power4.out"
-      });
-    });
-
-    gsap.from(".preset-card", {
-        scrollTrigger: { trigger: "#presets", start: "top 60%" },
-        x: 100, opacity: 0, duration: 0.8, stagger: 0.1, ease: "expo.out"
-    });
-  }, []);
+  const wrapWithSound = (fn: any, soundFn: () => void = playClick) => {
+      return (...args: any[]) => { soundFn(); fn(...args); };
+  };
 
   const handleRandomize = useCallback(() => {
-    setHue(Math.floor(Math.random() * 360));
-    setSat(Math.floor(Math.random() * 80) + 10);
-    setLum(Math.floor(Math.random() * 60) + 20);
-    // Subtle randomization for texture
-    setNoise(Math.floor(Math.random() * 20)); 
-    setVignette(Math.floor(Math.random() * 40));
-  }, []);
+    playSnap();
+    if (systemMode === 'chroma') {
+        setHue(Math.floor(Math.random() * 360));
+        setSat(Math.floor(Math.random() * 80) + 10);
+        setLum(Math.floor(Math.random() * 60) + 20);
+        setHueB(Math.floor(Math.random() * 360));
+        setSatB(Math.floor(Math.random() * 80) + 10);
+        setLumB(Math.floor(Math.random() * 60) + 20);
+        setGradientType(Math.random() > 0.6 ? (Math.random() > 0.5 ? 'linear' : 'radial') : 'none');
+        setGradientAngle(Math.floor(Math.random() * 360));
+        setNoise(Math.floor(Math.random() * 20)); 
+        setFineGrain(Math.floor(Math.random() * 20));
+        setVignette(Math.floor(Math.random() * 40));
+        setNoiseFreq(0.3 + Math.random() * 1.5);
+    } else {
+        setFluxHue(Math.floor(Math.random() * 360));
+        setFluxSpectra(Math.floor(Math.random() * 100));
+        setFluxExposure(Math.floor(Math.random() * 100));
+        setFluxDistortion(Math.floor(Math.random() * 100));
+        setFluxGrain(Math.floor(Math.random() * 60) + 10);
+        setFluxFineGrain(Math.floor(Math.random() * 30));
+        setFluxIso(Math.floor(Math.random() * 100));
+        setFluxSeed(Math.floor(Math.random() * 100000));
+        setFluxPattern(FLUX_PATTERNS[Math.floor(Math.random() * FLUX_PATTERNS.length)]);
+    }
+  }, [systemMode]);
 
   const cycleBlendMode = useCallback(() => {
+    playSwitch();
     const currentIndex = BLEND_MODES.indexOf(blendMode);
-    const nextIndex = (currentIndex + 1) % BLEND_MODES.length;
-    setBlendMode(BLEND_MODES[nextIndex]);
+    setBlendMode(BLEND_MODES[(currentIndex + 1) % BLEND_MODES.length]);
   }, [blendMode]);
+
+  const toggleNoiseType = useCallback(() => {
+    playSwitch();
+    setNoiseType(prev => prev === 'fractalNoise' ? 'turbulence' : 'fractalNoise');
+  }, []);
+  
+  const cycleFluxPattern = useCallback(() => {
+      playSwitch();
+      setFluxPattern(prev => FLUX_PATTERNS[(FLUX_PATTERNS.indexOf(prev) + 1) % FLUX_PATTERNS.length]);
+  }, []);
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+          const reader = new FileReader();
+          reader.onload = (evt) => { 
+            if (evt.target?.result) { 
+                const img = new Image();
+                img.onload = () => {
+                    setImgDims({w: img.width, h: img.height});
+                    setBgImage(evt.target!.result as string); 
+                    playSwitch(); 
+                };
+                img.src = evt.target!.result as string;
+            } 
+          };
+          reader.readAsDataURL(file);
+      }
+  };
 
   const handleExport = async (sizeKey: DownloadSize) => {
     setIsGenerating(true);
+    playSwitch();
     try {
-      const dataUrl = await generateImage(
-        hue, sat, lum, 
-        noise, 
-        blendMode as GlobalCompositeOperation, 
-        vignette, 
-        sizeKey
-      );
-      
-      const filename = `CHROMA_H${hue}_S${sat}_L${lum}_${sizeKey}.png`;
-      triggerDownload(dataUrl, filename);
-    } catch (e) {
-      console.error("Export failed", e);
-      alert("Failed to generate image.");
-    } finally {
-      setIsGenerating(false);
-    }
+      let dataUrl = '';
+      if (systemMode === 'chroma') {
+        dataUrl = await generateImage(
+            hue, sat, lum, hueB, satB, lumB,
+            gradientType, gradientAngle,
+            noise, fineGrain, smudgeActive, smudgeFactor,
+            blendMode as GlobalCompositeOperation, 
+            noiseType, noiseFreq, noiseOctaves, vignette, sizeKey, bgImage
+        );
+      } else {
+        dataUrl = await generateFluxImage(
+            fluxHue, fluxSpectra, fluxExposure, fluxDistortion,
+            fluxGrain, fluxFineGrain, fluxIso, sizeKey, fluxPattern, fluxSmudgeActive, fluxSmudgeFactor, fluxSeed
+        );
+      }
+      triggerDownload(dataUrl, `CHROMA_${systemMode.toUpperCase()}_${Date.now()}_${sizeKey}.png`);
+    } catch (e) { console.error(e); alert("Failed to generate image."); } finally { setIsGenerating(false); }
   };
 
-  const ambientColor = `hsla(${hue}, ${sat}%, 50%, 0.15)`;
+  const copyCode = () => {
+      const payload = {
+        systemMode,
+        chroma: { hue, sat, lum, hueB, satB, lumB, gradientType, gradientAngle, noise, fineGrain, smudgeActive, smudgeFactor, vignette, blendMode, noiseType, noiseFreq, noiseOctaves },
+        flux: { 
+            hue: fluxHue, spectra: fluxSpectra, exposure: fluxExposure, distortion: fluxDistortion, 
+            grain: fluxGrain, fineGrain: fluxFineGrain, iso: fluxIso, pattern: fluxPattern,
+            smudgeActive: fluxSmudgeActive, smudgeFactor: fluxSmudgeFactor
+        }
+      };
+      navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      playSwitch();
+  };
+
+  const handleShare = () => {
+      playClick();
+      navigator.clipboard.writeText(window.location.href);
+      setShareLabel("LINK COPIED");
+      setTimeout(() => setShareLabel("SHARE SIGNAL"), 2000);
+  };
+
+  const getGradientCSS = () => {
+    if (systemMode === 'chroma') {
+        const c1 = `hsl(${hue}, ${sat}%, ${lum}%)`;
+        const c2 = `hsl(${hueB}, ${satB}%, ${lumB}%)`;
+        if (gradientType === 'linear') return `linear-gradient(${gradientAngle}deg, ${c1}, ${c2})`;
+        else if (gradientType === 'radial') return `radial-gradient(circle at center, ${c1}, ${c2})`;
+        else return c1;
+    } 
+    return 'black'; 
+  };
+
+  const getGradientStyle = () => {
+      const style: any = {};
+      if (bgImage && systemMode === 'chroma') {
+          style.backgroundImage = `url(${bgImage}), ${getGradientCSS()}`;
+          style.backgroundBlendMode = 'overlay'; style.backgroundSize = 'cover'; style.backgroundPosition = 'center';
+      } else { style.background = getGradientCSS(); }
+      return style;
+  };
+
+  const noiseSvg = getNoiseSvgDataUri(systemMode === 'chroma' ? noiseType : 'turbulence', systemMode === 'chroma' ? noiseFreq : (0.5 + (fluxIso/100)*1.5), systemMode === 'chroma' ? noiseOctaves : 2);
 
   return (
-    <div className="bg-[#0a0a0a] min-h-screen text-[#e5e5e5] font-sans selection:bg-green-500/30 selection:text-green-200">
-      
-      {/* DYNAMIC NOISE LAYER */}
-      <div 
-        className="fixed inset-0 z-[9000] pointer-events-none transition-all duration-300"
-        style={{
-            backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='1'/%3E%3C/svg%3E")`,
-            opacity: noise / 100,
-            mixBlendMode: blendMode as any
-        }}
-      ></div>
-
-      {/* DYNAMIC VIGNETTE LAYER */}
-      <div 
-        className="fixed inset-0 z-[8999] pointer-events-none transition-all duration-300"
-        style={{
-            background: 'radial-gradient(circle, transparent 50%, black 150%)',
-            opacity: vignette / 100
-        }}
-      ></div>
-
+    <div className="bg-[#050505] h-screen w-screen text-[#e5e5e5] font-sans overflow-hidden flex flex-col md:flex-row">
       <Cursor />
 
-      {/* Navigation */}
-      <nav className="fixed top-0 w-full z-50 p-6 md:p-8 flex justify-between items-start mix-blend-exclusion">
-        <div className="font-mono font-bold text-xl md:text-2xl tracking-tighter cursor-hover group">
-          CHROMA<span className="text-xs align-top opacity-50 group-hover:text-green-400 transition-colors">Status: Online</span>
-        </div>
-        <div className="flex gap-8 font-mono text-xs md:text-sm uppercase tracking-widest hidden md:flex">
-          <a href="#about" className="hover:text-gray-400 transition-colors cursor-hover">Manual</a>
-          <a href="#presets" className="hover:text-gray-400 transition-colors cursor-hover">Presets</a>
-          <span className="opacity-50">V 1.0.5</span>
-        </div>
-      </nav>
-
-      <main>
-        {/* HERO */}
-        <section className="min-h-screen flex flex-col items-center justify-center relative overflow-hidden py-20">
-            {/* Ambient Light */}
-            <div 
-                className="absolute w-[80vw] h-[80vw] rounded-full blur-[120px] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-0 transition-colors duration-1000 ease-in-out"
-                style={{ backgroundColor: ambientColor }}
-            ></div>
-
-            {/* The Main Device */}
-            <div className="z-10 mt-12 md:mt-0">
-                <Device 
-                    hue={hue} sat={sat} lum={lum} 
-                    noise={noise} vignette={vignette} blendMode={blendMode}
-                    locked={locked}
-                    onHueChange={setHue}
-                    onSatChange={setSat}
-                    onLumChange={setLum}
-                    onNoiseChange={setNoise}
-                    onVignetteChange={setVignette}
-                    onBlendModeChange={cycleBlendMode}
-                    onRandomize={handleRandomize}
-                    onToggleLock={() => setLocked(!locked)}
-                    onExport={() => setShowExport(true)}
-                />
+      {/* --- SIDEBAR: CONTROL DECK --- */}
+      <div className="w-full md:w-[480px] lg:w-[540px] flex-shrink-0 bg-[#0a0a0a] border-b md:border-b-0 md:border-r border-white/10 shadow-2xl z-20 flex flex-col h-[40vh] md:h-full relative">
+        {/* Header / Nav */}
+        <header className="p-6 border-b border-white/5 flex justify-between items-center bg-[#0a0a0a] z-30 sticky top-0 shrink-0">
+             <div className="font-mono font-bold text-xl tracking-tighter cursor-hover group select-none">CHROMA<span className="text-xs align-top opacity-50 group-hover:text-green-400 transition-colors">Sys</span></div>
+             <div className="flex bg-black/50 backdrop-blur rounded-full p-1 border border-white/10 gap-1 pointer-events-auto shadow-lg">
+                <button onClick={wrapWithSound(() => setSystemMode('chroma'), playSwitch)} className={`px-4 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-widest transition-all ${systemMode === 'chroma' ? 'bg-white text-black' : 'text-neutral-500 hover:text-white'}`}>Chroma</button>
+                <button onClick={wrapWithSound(() => setSystemMode('flux'), playSwitch)} className={`px-4 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-widest transition-all ${systemMode === 'flux' ? 'bg-orange-500 text-black' : 'text-neutral-500 hover:text-orange-500'}`}>Flux</button>
             </div>
+             <button onClick={handleShare} className="hidden lg:flex items-center gap-2 px-3 py-1 rounded border border-white/20 hover:bg-white/10 transition-colors"><i className="ph ph-share-network text-sm"></i></button>
+        </header>
 
-             {/* Scroll Indicator */}
-             <div className="absolute bottom-10 left-1/2 -translate-x-1/2 text-center opacity-40 animate-bounce">
-                <div className="text-[10px] font-mono uppercase mb-2">Scroll for Specs</div>
-                <i className="ph ph-arrow-down text-xl"></i>
-            </div>
-        </section>
-
-        {/* NARRATIVE SECTION */}
-        <section id="about" className="bg-[#0f0f0f] py-32 relative overflow-hidden border-t border-white/5">
-             <div className="max-w-6xl mx-auto px-6 grid grid-cols-1 md:grid-cols-2 gap-20 items-center">
-                <div>
-                    <h2 className="text-5xl md:text-8xl font-sans font-bold leading-[0.9] tracking-tighter mb-8 text-neutral-200 reveal-text">
-                        Analog Feel.<br/>Digital Soul.
-                    </h2>
-                    <p className="text-lg md:text-xl text-neutral-400 font-mono leading-relaxed max-w-md reveal-text">
-                        We wanted to bring the tactile joy of physical synthesizers to color theory. Adjust hue with heavy, resistance-damped knobs. Feel the click of the switch.
-                    </p>
-                    <div className="mt-12 flex gap-8 reveal-text">
-                        <div className="flex flex-col gap-1">
-                            <span className="text-3xl md:text-4xl font-sans font-bold">4k</span>
-                            <span className="text-xs font-mono uppercase opacity-50">Resolution</span>
-                        </div>
-                        <div className="w-px bg-white/10 h-12"></div>
-                        <div className="flex flex-col gap-1">
-                            <span className="text-3xl md:text-4xl font-sans font-bold">60fps</span>
-                            <span className="text-xs font-mono uppercase opacity-50">Physics</span>
-                        </div>
-                    </div>
-                </div>
-                <div className="relative h-[400px] md:h-[600px] bg-[#1a1a1a] rounded-lg overflow-hidden border border-white/5 group perspective-card cursor-hover reveal-text">
-                    <img 
-                        src="https://images.unsplash.com/photo-1550009158-9ebf69173e03?q=80&w=2601&auto=format&fit=crop" 
-                        alt="Abstract Macro Electronics" 
-                        className="w-full h-full object-cover opacity-60 mix-blend-overlay transition-transform duration-700 group-hover:scale-110"
+        {/* Scrollable Controls Area */}
+        <div className="flex-1 overflow-y-auto overflow-x-hidden hide-scrollbar p-6 pb-20 relative bg-neutral-900/50">
+            {/* Dotted Pattern Background */}
+            <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ backgroundImage: 'radial-gradient(#fff 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
+            
+            <div className="relative z-10 flex flex-col items-center">
+                 {systemMode === 'chroma' ? (
+                    <Device 
+                        hue={hue} sat={sat} lum={lum} hueB={hueB} satB={satB} lumB={lumB}
+                        gradientType={gradientType} gradientAngle={gradientAngle}
+                        noise={noise} fineGrain={fineGrain} smudgeActive={smudgeActive} smudgeFactor={smudgeFactor}
+                        vignette={vignette} blendMode={blendMode}
+                        noiseType={noiseType} noiseFreq={noiseFreq} noiseOctaves={noiseOctaves}
+                        locked={locked} audioSync={audioSync} bgImage={bgImage}
+                        onHueChange={setHue} onSatChange={setSat} onLumChange={setLum}
+                        onHueBChange={setHueB} onSatBChange={setSatB} onLumBChange={setLumB}
+                        onGradientTypeChange={wrapWithSound(setGradientType)} onGradientAngleChange={setGradientAngle}
+                        onNoiseChange={setNoise} onFineGrainChange={setFineGrain} 
+                        onSmudgeActiveChange={setSmudgeActive} onSmudgeFactorChange={setSmudgeFactor}
+                        onNoiseTypeChange={toggleNoiseType} onNoiseFreqChange={setNoiseFreq} onNoiseOctavesChange={setNoiseOctaves}
+                        onVignetteChange={setVignette} onBlendModeChange={cycleBlendMode}
+                        onRandomize={handleRandomize} onToggleLock={wrapWithSound(() => setLocked(!locked), playSwitch)}
+                        onExport={wrapWithSound(() => setShowExport(true))} onSave={wrapWithSound(() => setShowSaveModal(true))}
+                        onShowCode={handleShowCode} onToggleAudio={toggleAudioSync}
+                        onImageUpload={handleImageUpload} onClearImage={() => { setBgImage(null); setImgDims(null); playClick(); }}
                     />
-                    <div className="absolute bottom-0 left-0 w-full p-8 bg-gradient-to-t from-black via-black/80 to-transparent">
-                        <div className="font-mono text-xs text-green-500 mb-2">>> SYSTEM_READY</div>
-                        <h3 className="text-2xl font-bold">Component Level Design</h3>
-                    </div>
-                </div>
+                ) : (
+                    <FluxDevice 
+                        hue={fluxHue} spectra={fluxSpectra} exposure={fluxExposure}
+                        distortion={fluxDistortion} grain={fluxGrain} fineGrain={fluxFineGrain}
+                        smudgeActive={fluxSmudgeActive} smudgeFactor={fluxSmudgeFactor}
+                        iso={fluxIso} pattern={fluxPattern} locked={locked}
+                        onHueChange={setFluxHue} onSpectraChange={setFluxSpectra}
+                        onExposureChange={setFluxExposure} onDistortionChange={setFluxDistortion}
+                        onGrainChange={setFluxGrain} onFineGrainChange={setFluxFineGrain}
+                        onSmudgeActiveChange={setFluxSmudgeActive} onSmudgeFactorChange={setFluxSmudgeFactor}
+                        onIsoChange={setFluxIso} onPatternChange={cycleFluxPattern}
+                        onRandomize={handleRandomize} onToggleLock={wrapWithSound(() => setLocked(!locked), playSwitch)}
+                        onExport={wrapWithSound(() => setShowExport(true))} 
+                        onSave={wrapWithSound(() => setShowSaveModal(true))} 
+                        onShowCode={handleShowCode}
+                    />
+                )}
             </div>
-        </section>
+        </div>
+      </div>
 
-        {/* PRESETS SECTION */}
-        <section id="presets" className="py-32 bg-black border-t border-white/10 overflow-hidden">
-            <div className="mb-16 px-6 max-w-6xl mx-auto">
-                <div className="text-xs font-mono text-green-500 mb-2">/// PRESET_LIBRARY</div>
-                <h2 className="text-4xl md:text-5xl font-sans font-bold">Signal Configurations</h2>
-            </div>
+      {/* --- MAIN: VIEWPORT / VISUALIZER --- */}
+      <div className="flex-1 bg-black relative flex items-center justify-center p-4 md:p-8 overflow-hidden order-first md:order-last h-[60vh] md:h-full">
+         <div ref={viewportRef} className="relative w-full h-full max-w-[1600px] flex items-center justify-center">
+             
+             {/* ACTIVE CANVAS AREA: The artboard that actually contains the image/visuals */}
+             <div 
+                className="relative shadow-2xl overflow-hidden ring-1 ring-white/10"
+                style={{ 
+                    width: activeCanvasDims?.w || '100%', 
+                    height: activeCanvasDims?.h || '100%',
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                    backgroundColor: '#171717'
+                }}
+             >
+                {/* --- CHROMA RENDERING LAYERS (ABSOLUTE) --- */}
+                <div className={`absolute inset-0 transition-opacity duration-500 ${systemMode === 'chroma' ? 'opacity-100' : 'opacity-0'}`} style={getGradientStyle()}></div>
+                <div className={`absolute inset-0 transition-opacity duration-500 pointer-events-none ${systemMode === 'chroma' ? 'opacity-100' : 'opacity-0'}`} style={{ backgroundImage: `url("${noiseSvg}")`, opacity: noise / 100, mixBlendMode: blendMode as any }}></div>
+                <div className={`absolute inset-0 transition-opacity duration-500 pointer-events-none ${systemMode === 'chroma' ? 'opacity-100' : 'opacity-0'}`} style={{ background: 'radial-gradient(circle, transparent 50%, black 150%)', opacity: vignette / 100 }}></div>
 
-            <div className="flex gap-8 px-6 overflow-x-auto pb-12 snap-x hide-scrollbar">
-                 {[
-                    { title: "Neon Tokyo", desc: "High saturation cyberpunk aesthetics.", grad: "from-purple-900 to-blue-900", hue: 280, sat: 90, lum: 60, noise: 15, vignette: 20 },
-                    { title: "Mars Rover", desc: "Dusty, monochromatic rust tones.", grad: "from-orange-900 to-red-900", hue: 20, sat: 60, lum: 40, noise: 40, vignette: 50 },
-                    { title: "Brutalist", desc: "Essential greyscales for architectural minimalism.", grad: "from-slate-700 to-slate-900", hue: 0, sat: 0, lum: 80, noise: 80, vignette: 0 },
-                    { title: "Deep Forest", desc: "Organic tones with low luminescence.", grad: "from-emerald-900 to-teal-800", hue: 150, sat: 70, lum: 30, noise: 10, vignette: 30 },
-                    { title: "Solar Flare", desc: "Intense warm tones for high-impact alerts.", grad: "from-yellow-700 to-red-600", hue: 45, sat: 100, lum: 60, noise: 5, vignette: 10 }
-                 ].map((preset, i) => (
-                    <button 
-                        key={i}
-                        onClick={() => {
-                            setHue(preset.hue); setSat(preset.sat); setLum(preset.lum);
-                            setNoise(preset.noise); setVignette(preset.vignette);
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }}
-                        className="preset-card flex-none w-[300px] md:w-[400px] h-[450px] md:h-[500px] bg-[#111] border border-white/10 rounded-xl p-6 relative group cursor-hover hover:border-gray-500/50 transition-colors snap-center text-left"
-                    >
-                        <div className={`w-full h-40 md:h-48 bg-gradient-to-br ${preset.grad} rounded mb-6 shadow-inner`}></div>
-                        <h3 className="text-2xl md:text-3xl font-sans font-bold mb-2">{preset.title}</h3>
-                        <p className="font-mono text-xs md:text-sm text-gray-500 mb-8 leading-relaxed">{preset.desc}</p>
-                        <div className="absolute bottom-6 left-6 font-mono text-[10px] uppercase tracking-widest border border-white/20 px-3 py-1 rounded-full group-hover:bg-white group-hover:text-black transition-colors">Load Cartridge</div>
-                    </button>
-                 ))}
-            </div>
-        </section>
+                {/* --- FLUX RENDERING LAYERS (ABSOLUTE) --- */}
+                <canvas ref={fluxCanvasRef} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ${systemMode === 'flux' ? 'opacity-100' : 'opacity-0'}`} />
+                <div className={`absolute inset-0 pointer-events-none transition-opacity duration-500 ${systemMode === 'flux' ? 'opacity-100' : 'opacity-0'}`} style={{ backgroundImage: `url("${noiseSvg}")`, opacity: fluxGrain / 100, mixBlendMode: 'overlay' }}></div>
+                
+                {/* REC INDICATOR */}
+                {isGenerating && (<div className="absolute top-4 right-4 z-50 bg-red-600 text-white font-mono text-xs px-3 py-1 rounded animate-pulse shadow-lg flex items-center gap-2"><div className="w-2 h-2 bg-white rounded-full"></div>REC</div>)}
+             </div>
+         </div>
+      </div>
 
-        {/* EXPORT MODAL */}
-        {showExport && (
-            <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/80 backdrop-blur-sm p-6" onClick={() => setShowExport(false)}>
-                <div 
-                    className="bg-[#141414] border border-white/10 rounded-xl p-8 max-w-lg w-full relative hardware-chassis"
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    <div className="absolute top-4 right-4 text-xs font-mono cursor-pointer hover:text-white text-gray-500" onClick={() => setShowExport(false)}>[X] CLOSE</div>
-                    
-                    <h2 className="text-2xl font-bold font-sans mb-2 text-white">Export Signal</h2>
-                    <p className="font-mono text-xs text-gray-400 mb-8">Render the current frequency visualization to high-resolution image format.</p>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {(Object.keys(DOWNLOAD_SIZES) as DownloadSize[]).map((key) => (
-                            <button
-                                key={key}
-                                disabled={isGenerating}
-                                onClick={() => handleExport(key)}
-                                className="group h-16 border border-white/10 rounded bg-black/20 hover:bg-white/5 flex flex-col items-center justify-center transition-colors cursor-hover disabled:opacity-50"
-                            >
-                                <span className="font-mono text-lg font-bold group-hover:text-green-400">{key}</span>
-                                <span className="text-[10px] text-gray-500 uppercase tracking-widest">{DOWNLOAD_SIZES[key].label}</span>
-                            </button>
-                        ))}
-                    </div>
-                    
-                    {isGenerating && (
-                        <div className="mt-4 text-center font-mono text-xs text-green-500 animate-pulse">
-                            /// RENDERING OUTPUT... PLEASE WAIT
-                        </div>
-                    )}
-                </div>
-            </div>
-        )}
+      {/* --- EXPORT MODAL --- */}
+      {showExport && (
+          <div className="fixed inset-0 z-[9999] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+              <div className="bg-[#111] border border-white/10 rounded-xl p-8 max-w-md w-full shadow-2xl relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-green-500 to-blue-500"></div>
+                  <h2 className="font-mono text-xl font-bold mb-2 tracking-tighter">RENDER OUTPUT</h2>
+                  <p className="text-xs font-mono text-neutral-500 mb-6 uppercase tracking-widest">Select target resolution</p>
+                  <div className="grid grid-cols-1 gap-3">
+                      {(Object.keys(DOWNLOAD_SIZES) as DownloadSize[]).map((key) => (
+                          <button 
+                              key={key}
+                              onClick={() => { handleExport(key); setShowExport(false); }}
+                              className="group flex items-center justify-between p-4 rounded border border-white/10 hover:bg-white/5 hover:border-white/20 transition-all active:scale-[0.98]"
+                          >
+                              <span className="font-mono font-bold text-sm">{key}</span>
+                              <span className="text-[10px] font-mono text-neutral-500 group-hover:text-white transition-colors">{DOWNLOAD_SIZES[key].label}</span>
+                          </button>
+                      ))}
+                  </div>
+                  <button onClick={() => { setShowExport(false); playClick(); }} className="mt-6 w-full py-3 rounded border border-white/5 hover:bg-white/5 text-neutral-400 hover:text-white font-mono text-xs tracking-widest transition-colors">CANCEL_OPERATION</button>
+              </div>
+          </div>
+       )}
 
-        <footer className="bg-black text-white/30 py-12 px-6 border-t border-white/5 font-mono text-xs">
-            <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
-                <div className="text-center md:text-left">
-                    CHROMA-SYS © 2024<br/>
-                    ENGINEERED IN REACT
-                </div>
-                <div className="flex gap-4">
-                    <a href="#" className="hover:text-white transition-colors">TWITTER</a>
-                    <a href="#" className="hover:text-white transition-colors">GITHUB</a>
-                </div>
-            </div>
-        </footer>
-
-      </main>
+       {/* --- CODE MODAL --- */}
+       {showCode && (
+          <div className="fixed inset-0 z-[9999] bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+              <div className="bg-[#111] border border-white/10 rounded-xl p-8 max-w-2xl w-full shadow-2xl relative flex flex-col max-h-[80vh]">
+                   <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 to-pink-500"></div>
+                   <div className="flex justify-between items-end mb-6">
+                      <div>
+                          <h2 className="font-mono text-xl font-bold tracking-tighter">SYSTEM_SIGNAL</h2>
+                          <p className="text-xs font-mono text-neutral-500 uppercase tracking-widest">Current State Configuration</p>
+                      </div>
+                      <button onClick={() => { copyCode(); }} className="text-[10px] bg-white/10 px-3 py-1 rounded hover:bg-white/20 transition-colors font-mono">COPY JSON</button>
+                   </div>
+                   <div className="bg-black/50 rounded p-4 border border-white/5 overflow-auto flex-1 font-mono text-[10px] text-green-400/80 selection:bg-green-500/30">
+                      <pre>{JSON.stringify({
+                          mode: systemMode,
+                          chroma: { hue, sat, lum, hueB, satB, lumB, gradientType, gradientAngle, noise, fineGrain, smudgeActive, smudgeFactor, vignette, blendMode, noiseType, noiseFreq, noiseOctaves },
+                          flux: { 
+                              hue: fluxHue, spectra: fluxSpectra, exposure: fluxExposure, distortion: fluxDistortion, 
+                              grain: fluxGrain, fineGrain: fluxFineGrain, iso: fluxIso, pattern: fluxPattern,
+                              smudgeActive: fluxSmudgeActive, smudgeFactor: fluxSmudgeFactor
+                          }
+                      }, null, 2)}</pre>
+                   </div>
+                   <button onClick={() => { setShowCode(false); playClick(); }} className="mt-6 w-full py-3 rounded border border-white/5 hover:bg-white/5 text-neutral-400 hover:text-white font-mono text-xs tracking-widest transition-colors">CLOSE_TERMINAL</button>
+              </div>
+          </div>
+       )}
     </div>
   );
 }
