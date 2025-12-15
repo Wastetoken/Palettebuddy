@@ -146,17 +146,29 @@ export default function App() {
   const toggleAudioSync = async () => {
     if (audioSync) {
         setAudioSync(false);
+
+        // --- BAKE AUDIO OFFSET INTO STATE ---
+        // This ensures color doesn't snap back when disabling sync
+        const finalOffset = audioAccumulatorRef.current.hueOffset;
+        if (systemMode === 'chroma') {
+            setHue(prev => (prev + finalOffset) % 360);
+            setHueB(prev => (prev + finalOffset) % 360);
+        } else {
+            setFluxHue(prev => (prev + finalOffset) % 360);
+        }
+
         if (audioContextRef.current) {
             audioContextRef.current.close();
             audioContextRef.current = null;
         }
-        // Reset Visuals
+        
+        // Reset Visuals (remove temporary CSS filters)
         if (chromaRef.current) {
              chromaRef.current.style.transform = 'scale(1)';
              chromaRef.current.style.filter = 'none';
         }
-        // Reset Accumulator when turning off? 
-        // User might prefer it sticks, but typically off means reset to manual control.
+        
+        // Reset Accumulator now that it's baked into the state
         audioAccumulatorRef.current.hueOffset = 0;
         
         return;
