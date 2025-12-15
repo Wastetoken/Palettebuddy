@@ -75,39 +75,63 @@ export default function App() {
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const rafRef = useRef<number | null>(null);
+  const dataArrayRef = useRef<Uint8Array>(new Uint8Array(1024)); // Buffer for audio data
 
   // Refs for rendering
   const fluxCanvasRef = useRef<HTMLCanvasElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const chromaRef = useRef<HTMLDivElement>(null); // Ref for Chroma Gradient Div
+  
+  // Persistent audio accumulator for sticky values (hue)
+  const audioAccumulatorRef = useRef({
+      hueOffset: 0
+  });
 
-  // --- DIMENSION CALCULATION LOGIC ---
-  // Calculates the 'Active Canvas' size so effects only apply to the image area, not the black bars.
+  // --- STATE REF (For RAF Loop) ---
+  // We keep a ref updated with the latest state so the Animation Frame loop can read it without needing to be re-bound
+  const stateRef = useRef({
+    systemMode, hue, sat, lum, hueB, satB, lumB, gradientType, gradientAngle,
+    noise, fineGrain, smudgeActive, smudgeFactor, vignette, blendMode, noiseType, noiseFreq, noiseOctaves,
+    fluxHue, fluxSpectra, fluxExposure, fluxDistortion, fluxGrain, fluxFineGrain, fluxSmudgeActive, fluxSmudgeFactor, fluxIso, fluxSeed, fluxPattern,
+    bgImage, activeCanvasDims, audioSync
+  });
+
+  useEffect(() => {
+    stateRef.current = {
+        systemMode, hue, sat, lum, hueB, satB, lumB, gradientType, gradientAngle,
+        noise, fineGrain, smudgeActive, smudgeFactor, vignette, blendMode, noiseType, noiseFreq, noiseOctaves,
+        fluxHue, fluxSpectra, fluxExposure, fluxDistortion, fluxGrain, fluxFineGrain, fluxSmudgeActive, fluxSmudgeFactor, fluxIso, fluxSeed, fluxPattern,
+        bgImage, activeCanvasDims, audioSync
+    };
+    
+    // If we are NOT in audio sync mode and values change, force a static render update for Flux
+    if (!audioSync && systemMode === 'flux') {
+        requestAnimationFrame(renderStaticFlux);
+    }
+  }, [
+    systemMode, hue, sat, lum, hueB, satB, lumB, gradientType, gradientAngle, 
+    noise, fineGrain, smudgeActive, smudgeFactor, vignette, noiseType, noiseFreq, noiseOctaves, blendMode,
+    fluxHue, fluxSpectra, fluxExposure, fluxDistortion, fluxGrain, fluxFineGrain, fluxSmudgeActive, fluxSmudgeFactor, fluxIso, fluxSeed, fluxPattern,
+    bgImage, activeCanvasDims, audioSync
+  ]);
+
+  // --- DIMENSION CALCULATION ---
   const updateCanvasDims = useCallback(() => {
     if (!viewportRef.current) return;
     const viewport = viewportRef.current.getBoundingClientRect();
-    
-    // Safety check for 0 dims (hidden)
     if (viewport.width === 0 || viewport.height === 0) return;
 
     if (systemMode === 'chroma' && bgImage && imgDims) {
-        // CONTAIN LOGIC: Fit image aspect ratio into viewport
         const imgRatio = imgDims.w / imgDims.h;
         const viewRatio = viewport.width / viewport.height;
-        
         let w, h;
         if (imgRatio > viewRatio) {
-            // Image is wider than viewport -> Constraint by width
-            w = viewport.width;
-            h = viewport.width / imgRatio;
+            w = viewport.width; h = viewport.width / imgRatio;
         } else {
-            // Image is taller -> Constraint by height
-            h = viewport.height;
-            w = viewport.height * imgRatio;
+            h = viewport.height; w = viewport.height * imgRatio;
         }
         setActiveCanvasDims({ w, h });
     } else {
-        // Fill viewport for Flux or pure generative Chroma
         setActiveCanvasDims({ w: viewport.width, h: viewport.height });
     }
   }, [systemMode, bgImage, imgDims]);
@@ -118,7 +142,167 @@ export default function App() {
     return () => window.removeEventListener('resize', updateCanvasDims);
   }, [updateCanvasDims]);
 
-  // Sync state from URL
+  // --- AUDIO SYNC SETUP ---
+  const toggleAudioSync = async () => {
+    if (audioSync) {
+        setAudioSync(false);
+        if (audioContextRef.current) {
+            audioContextRef.current.close();
+            audioContextRef.current = null;
+        }
+        // Reset Visuals
+        if (chromaRef.current) {
+             chromaRef.current.style.transform = 'scale(1)';
+             chromaRef.current.style.filter = 'none';
+        }
+        // Reset Accumulator when turning off? 
+        // User might prefer it sticks, but typically off means reset to manual control.
+        audioAccumulatorRef.current.hueOffset = 0;
+        
+        return;
+    }
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const analyser = audioCtx.createAnalyser();
+        const source = audioCtx.createMediaStreamSource(stream);
+        source.connect(analyser);
+        analyser.fftSize = 2048; 
+        // Lower smoothing for snappier response (was 0.85)
+        analyser.smoothingTimeConstant = 0.6;
+        
+        audioContextRef.current = audioCtx; 
+        analyserRef.current = analyser;
+        
+        setAudioSync(true); 
+        playSwitch();
+    } catch (err) { console.error(err); setAudioSync(false); }
+  };
+
+  // --- UNIFIED ANIMATION LOOP ---
+  // This loop runs constantly but does efficient checks. 
+  // It handles Audio Analysis + Reactivity for both engines.
+  useEffect(() => {
+    let animationFrameId: number;
+
+    const loop = () => {
+        const state = stateRef.current;
+        let bass = 0, mid = 0, high = 0, vol = 0;
+
+        // 1. Analyze Audio if Sync is On
+        if (state.audioSync && analyserRef.current) {
+            analyserRef.current.getByteFrequencyData(dataArrayRef.current);
+            
+            // Simple frequency bands
+            const data = dataArrayRef.current;
+            // Bass: ~0-60Hz (approx first 10 bins of 1024 based on 44.1kHz)
+            const bassSum = data.slice(0, 10).reduce((a,b) => a+b, 0);
+            bass = (bassSum / 10) / 255; // 0.0 - 1.0
+
+            // Mid: ~200-2000Hz
+            const midSum = data.slice(20, 100).reduce((a,b) => a+b, 0);
+            mid = (midSum / 80) / 255;
+
+            // High: ~2k+
+            const highSum = data.slice(100, 300).reduce((a,b) => a+b, 0);
+            high = (highSum / 200) / 255;
+            
+            vol = (bass + mid + high) / 3;
+
+            // Update Accumulators for Sticky Effects
+            // We increment the hue offset based on volume.
+            // If vol is 0, offset doesn't change -> Color Sticks.
+            if (vol > 0.02) {
+                audioAccumulatorRef.current.hueOffset += vol * 4; // Adjust speed here
+            }
+        }
+
+        // 2. Render Flux (Canvas)
+        if (state.systemMode === 'flux' && fluxCanvasRef.current && state.activeCanvasDims) {
+             // Only render continuous frames if audio is sync'd to save battery, 
+             // otherwise the useEffect dependency handles static updates.
+             if (state.audioSync) {
+                 const canvas = fluxCanvasRef.current;
+                 const dpr = window.devicePixelRatio || 1;
+                 const { w, h } = state.activeCanvasDims;
+                 const targetW = Math.floor(w * dpr);
+                 const targetH = Math.floor(h * dpr);
+
+                 if (canvas.width !== targetW || canvas.height !== targetH) {
+                     canvas.width = targetW; canvas.height = targetH;
+                 }
+
+                 const ctx = canvas.getContext('2d');
+                 if (ctx) {
+                     ctx.setTransform(1, 0, 0, 1, 0, 0);
+                     
+                     // APPLY AGGRESSIVE AUDIO REACTIVITY
+                     // Bass hits distortion (warping) and ISO (zoom/scale) hard
+                     const dynDistortion = state.fluxDistortion + (bass * 80); 
+                     const dynIso = state.fluxIso + (bass * 50);
+                     
+                     // Highs hit Spectra (chromatic aberration)
+                     const dynSpectra = state.fluxSpectra + (high * 100);
+                     
+                     // Volume drives Hue Cycling accumulatively
+                     // Use accumulated offset so color persists when silent
+                     const accumulatedHue = (state.fluxHue + audioAccumulatorRef.current.hueOffset) % 360;
+
+                     renderFluxToCanvas(ctx, canvas.width, canvas.height, accumulatedHue, dynSpectra, state.fluxExposure, dynDistortion, dynIso, state.fluxSeed, state.fluxPattern, state.fluxSmudgeActive, state.fluxSmudgeFactor);
+                 }
+             }
+        }
+
+        // 3. Render Chroma (DOM Reactivity)
+        if (state.systemMode === 'chroma' && chromaRef.current) {
+            if (state.audioSync) {
+                // Aggressive Reactivity
+                // Bass -> Scale Pulse (Kick) - Returns to 1 on silence
+                const scale = 1 + (bass * 0.25); 
+                
+                // Mids -> Saturation (Intensity) - Returns to 100 on silence
+                const saturate = 100 + (mid * 150);
+                
+                // Hue Rotate -> Accumulative (Sticks on silence)
+                const hueRot = audioAccumulatorRef.current.hueOffset % 360;
+
+                chromaRef.current.style.transform = `scale(${scale})`;
+                // Use hue-rotate to change colors fundamentally, not just brightness
+                chromaRef.current.style.filter = `hue-rotate(${hueRot}deg) saturate(${saturate}%) brightness(${1 + high * 0.5})`;
+            }
+        }
+
+        animationFrameId = requestAnimationFrame(loop);
+    };
+
+    loop();
+    return () => cancelAnimationFrame(animationFrameId);
+  }, []); // Run once, depend on refs
+
+  // Static Render helper for Flux (when not audio syncing)
+  const renderStaticFlux = () => {
+    const state = stateRef.current;
+    if (state.systemMode === 'flux' && fluxCanvasRef.current && state.activeCanvasDims) {
+         const canvas = fluxCanvasRef.current;
+         const dpr = window.devicePixelRatio || 1;
+         const { w, h } = state.activeCanvasDims;
+         const targetW = Math.floor(w * dpr);
+         const targetH = Math.floor(h * dpr);
+
+         if (canvas.width !== targetW || canvas.height !== targetH) {
+             canvas.width = targetW; canvas.height = targetH;
+         }
+         const ctx = canvas.getContext('2d');
+         if (ctx) {
+             ctx.setTransform(1, 0, 0, 1, 0, 0);
+             renderFluxToCanvas(ctx, canvas.width, canvas.height, state.fluxHue, state.fluxSpectra, state.fluxExposure, state.fluxDistortion, state.fluxIso, state.fluxSeed, state.fluxPattern, state.fluxSmudgeActive, state.fluxSmudgeFactor);
+         }
+    }
+  };
+
+
+  // --- REST OF APP LOGIC (Url Sync, Exports, etc) ---
+  // Url Sync...
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const signal = params.get('signal');
@@ -156,45 +340,8 @@ export default function App() {
         }
     }
   }, []);
-
-  // Audio Sync Logic
-  const toggleAudioSync = async () => {
-    if (audioSync) {
-        setAudioSync(false);
-        if (rafRef.current) cancelAnimationFrame(rafRef.current);
-        if (audioContextRef.current) audioContextRef.current.close();
-        audioContextRef.current = null;
-        return;
-    }
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const analyser = audioCtx.createAnalyser();
-        const source = audioCtx.createMediaStreamSource(stream);
-        source.connect(analyser);
-        analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.8;
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-        const timeArray = new Uint8Array(analyser.frequencyBinCount);
-        audioContextRef.current = audioCtx; analyserRef.current = analyser;
-        setAudioSync(true); playSwitch();
-        
-        const analyze = () => {
-            if (!analyser) return;
-            analyser.getByteFrequencyData(dataArray); analyser.getByteTimeDomainData(timeArray);
-            rafRef.current = requestAnimationFrame(analyze);
-        };
-        analyze();
-    } catch (err) { console.error(err); setAudioSync(false); }
-  };
-
-  const handleShowCode = () => {
-      wrapWithSound(() => {
-          if (audioSync) toggleAudioSync();
-          setShowCode(true);
-      }, playClick)();
-  };
-
-  // URL State Sync
+  
+  // URL Write Update
   useEffect(() => {
     const timer = setTimeout(() => {
         const payload = {
@@ -222,41 +369,7 @@ export default function App() {
     fluxHue, fluxSpectra, fluxExposure, fluxDistortion, fluxGrain, fluxFineGrain, fluxSmudgeActive, fluxSmudgeFactor, fluxIso, fluxSeed, fluxPattern
   ]);
 
-  // Flux Rendering Loop
-  const renderFlux = useCallback(() => {
-    if (systemMode === 'flux' && fluxCanvasRef.current && activeCanvasDims) {
-        const canvas = fluxCanvasRef.current;
-        const dpr = window.devicePixelRatio || 1;
-        
-        // Resize canvas to match the ACTIVE CANVAS AREA (not just viewport)
-        // Ensure width/height are integer physical pixels
-        const targetWidth = Math.floor(activeCanvasDims.w * dpr);
-        const targetHeight = Math.floor(activeCanvasDims.h * dpr);
-
-        if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
-             canvas.width = targetWidth;
-             canvas.height = targetHeight;
-        }
-
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-            // FIX: Reset transform to identity for pixel manipulation.
-            // getImageData/putImageData ignore transformations and work on physical pixels.
-            // Previous scaling caused effects to clip to the top-left logical viewport area.
-            ctx.setTransform(1, 0, 0, 1, 0, 0); 
-            renderFluxToCanvas(ctx, canvas.width, canvas.height, fluxHue, fluxSpectra, fluxExposure, fluxDistortion, fluxIso, fluxSeed, fluxPattern, fluxSmudgeActive, fluxSmudgeFactor);
-        }
-    }
-  }, [systemMode, activeCanvasDims, fluxHue, fluxSpectra, fluxExposure, fluxDistortion, fluxIso, fluxSeed, fluxPattern, fluxSmudgeActive, fluxSmudgeFactor]);
-
-  useEffect(() => {
-      renderFlux();
-      const ro = new ResizeObserver(() => requestAnimationFrame(renderFlux));
-      if (viewportRef.current) ro.observe(viewportRef.current);
-      return () => ro.disconnect();
-  }, [renderFlux]);
-
-  // Smooth Scroll (Lenis) - Applied to body/main for smooth sidebar scrolling if needed
+  // Smooth Scroll (Lenis)
   useEffect(() => {
     const lenis = new Lenis({ duration: 1.2, easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)), direction: 'vertical', smooth: true });
     const raf = (time: number) => { lenis.raf(time); requestAnimationFrame(raf); };
@@ -375,6 +488,13 @@ export default function App() {
       setTimeout(() => setShareLabel("SHARE SIGNAL"), 2000);
   };
 
+  const handleShowCode = () => {
+      wrapWithSound(() => {
+          if (audioSync) toggleAudioSync();
+          setShowCode(true);
+      }, playClick)();
+  };
+
   const getGradientCSS = () => {
     if (systemMode === 'chroma') {
         const c1 = `hsl(${hue}, ${sat}%, ${lum}%)`;
@@ -464,7 +584,7 @@ export default function App() {
       <div className="flex-1 bg-black relative flex items-center justify-center p-4 md:p-8 overflow-hidden order-first md:order-last h-[60vh] md:h-full">
          <div ref={viewportRef} className="relative w-full h-full max-w-[1600px] flex items-center justify-center">
              
-             {/* ACTIVE CANVAS AREA: The artboard that actually contains the image/visuals */}
+             {/* ACTIVE CANVAS AREA */}
              <div 
                 className="relative shadow-2xl overflow-hidden ring-1 ring-white/10"
                 style={{ 
@@ -475,12 +595,20 @@ export default function App() {
                     backgroundColor: '#171717'
                 }}
              >
-                {/* --- CHROMA RENDERING LAYERS (ABSOLUTE) --- */}
-                <div className={`absolute inset-0 transition-opacity duration-500 ${systemMode === 'chroma' ? 'opacity-100' : 'opacity-0'}`} style={getGradientStyle()}></div>
+                {/* --- CHROMA RENDERING LAYERS (DOM) --- */}
+                {/* We attach a REF here to manipulate styles directly for audio reactivity */}
+                <div 
+                    ref={chromaRef}
+                    className={`absolute inset-0 transition-opacity duration-500 origin-center will-change-transform ${systemMode === 'chroma' ? 'opacity-100' : 'opacity-0'}`} 
+                >
+                    <div className="absolute inset-0" style={getGradientStyle()}></div>
+                </div>
+
+                {/* Noise & Vignette (Static overlays) */}
                 <div className={`absolute inset-0 transition-opacity duration-500 pointer-events-none ${systemMode === 'chroma' ? 'opacity-100' : 'opacity-0'}`} style={{ backgroundImage: `url("${noiseSvg}")`, opacity: noise / 100, mixBlendMode: blendMode as any }}></div>
                 <div className={`absolute inset-0 transition-opacity duration-500 pointer-events-none ${systemMode === 'chroma' ? 'opacity-100' : 'opacity-0'}`} style={{ background: 'radial-gradient(circle, transparent 50%, black 150%)', opacity: vignette / 100 }}></div>
 
-                {/* --- FLUX RENDERING LAYERS (ABSOLUTE) --- */}
+                {/* --- FLUX RENDERING LAYERS (CANVAS) --- */}
                 <canvas ref={fluxCanvasRef} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ${systemMode === 'flux' ? 'opacity-100' : 'opacity-0'}`} />
                 <div className={`absolute inset-0 pointer-events-none transition-opacity duration-500 ${systemMode === 'flux' ? 'opacity-100' : 'opacity-0'}`} style={{ backgroundImage: `url("${noiseSvg}")`, opacity: fluxGrain / 100, mixBlendMode: 'overlay' }}></div>
                 
