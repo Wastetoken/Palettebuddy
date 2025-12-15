@@ -7,13 +7,12 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { Device } from './components/Device';
 import { FluxDevice } from './components/FluxDevice';
 import { Cursor } from './components/ui/Cursor';
-import { generateImage, generateFluxImage, triggerDownload, renderFluxToCanvas, DOWNLOAD_SIZES, DownloadSize, getNoiseSvgDataUri, NoiseType, FluxPattern } from './utils/canvas';
+import { generateImage, generateFluxImage, triggerDownload, renderFluxToCanvas, DOWNLOAD_SIZES, DownloadSize, getNoiseSvgDataUri, NoiseType, FluxPattern, FLUX_PATTERNS } from './utils/canvas';
 import { playClick, playSnap, playSwitch } from './utils/audio';
 
 gsap.registerPlugin(ScrollTrigger);
 
 const BLEND_MODES = ['overlay', 'soft-light', 'multiply', 'screen', 'difference'];
-const FLUX_PATTERNS: FluxPattern[] = ['wave', 'interference', 'ripple', 'prism', 'turbulence', 'glitch'];
 
 type SystemMode = 'chroma' | 'flux';
 

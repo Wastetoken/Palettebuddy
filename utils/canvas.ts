@@ -1,4 +1,5 @@
 
+
 export const DOWNLOAD_SIZES = {
   '4K': { width: 3840, height: 2160, label: '4K WALLPAPER' },
   '1080P': { width: 1920, height: 1080, label: '1080P DESKTOP' },
@@ -8,7 +9,22 @@ export const DOWNLOAD_SIZES = {
 
 export type DownloadSize = keyof typeof DOWNLOAD_SIZES;
 export type NoiseType = 'fractalNoise' | 'turbulence';
-export type FluxPattern = 'wave' | 'interference' | 'ripple' | 'prism' | 'turbulence' | 'glitch';
+
+// EXPANDED PATTERN LIST
+export const FLUX_PATTERNS = [
+    'wave', 
+    'interference', 
+    'ripple', 
+    'prism', 
+    'turbulence', 
+    'glitch', 
+    'kaleido', 
+    'pixelate', 
+    'scanline', 
+    'vortex'
+] as const;
+
+export type FluxPattern = typeof FLUX_PATTERNS[number];
 
 // --- SEEDED RANDOM ---
 function mulberry32(a: number) {
@@ -50,13 +66,13 @@ export const renderChromaFrame = (
     gradientType: 'none' | 'linear' | 'radial',
     gradientAngle: number,
     noiseOpacity: number,
-    fineGrainOpacity: number, // NEW
-    smudgeActive: boolean,    // NEW
-    smudgeFactor: number,     // NEW
+    fineGrainOpacity: number,
+    smudgeActive: boolean,
+    smudgeFactor: number,
     blendMode: string,
     vignetteIntensity: number,
     noiseImage: HTMLImageElement | null,
-    fineGrainImage: HTMLImageElement | null, // NEW
+    fineGrainImage: HTMLImageElement | null,
     bgImage: HTMLImageElement | null
 ) => {
     // 1. Draw Base
@@ -66,14 +82,7 @@ export const renderChromaFrame = (
     ctx.save();
     
     // Apply Smudge (Blur) filter before drawing base if active
-    // "Covers the whole affected canvas"
     if (smudgeActive && smudgeFactor > 0) {
-        // We use CSS filter on context. 
-        // Note: Filters apply to drawing operations. 
-        // For a full canvas smudge, we typically draw, then blur. 
-        // But here we set it before drawing to blur the generated shapes.
-        // Actually, to smudge the *result*, we should set filter then draw image.
-        // But since we are drawing gradients, setting filter works on them too.
         const blurPx = (smudgeFactor / 100) * 50; // Max 50px blur
         ctx.filter = `blur(${blurPx}px)`;
     }
@@ -128,7 +137,7 @@ export const renderChromaFrame = (
     // 3. Draw Fine Grain (Overlay)
     if (fineGrainOpacity > 0 && fineGrainImage) {
         ctx.save();
-        ctx.globalCompositeOperation = 'overlay'; // Fine grain usually looks best as overlay or soft-light
+        ctx.globalCompositeOperation = 'overlay';
         ctx.globalAlpha = fineGrainOpacity / 100;
         const pattern = ctx.createPattern(fineGrainImage, 'repeat');
         if (pattern) {
@@ -197,7 +206,7 @@ export const generateImage = async (
       });
   }
 
-  // Load Fine Grain Noise (Fixed high frequency)
+  // Load Fine Grain Noise
   let fineImgObj: HTMLImageElement | null = null;
   if (fineGrainOpacity > 0) {
       fineImgObj = new Image();
@@ -205,7 +214,6 @@ export const generateImage = async (
           if (!fineImgObj) return resolve();
           fineImgObj.onload = () => resolve();
           fineImgObj.onerror = reject;
-          // High freq fractal noise for fine grain
           fineImgObj.src = getNoiseSvgDataUri('fractalNoise', 2.5, 4);
       });
   }
@@ -252,9 +260,6 @@ function createLinearGradient(ctx: CanvasRenderingContext2D, width: number, heig
 // --- FLUX ENGINE V3 ---
 // ==========================================
 
-// ... (drawPsychedelicField, renderLiquidWave, etc. remain unchanged) ...
-// (I will re-include them to ensure file integrity, but with Smudge support added to the render function)
-
 const drawPsychedelicField = (
     ctx: CanvasRenderingContext2D,
     width: number,
@@ -265,7 +270,6 @@ const drawPsychedelicField = (
 ) => {
     const rng = mulberry32(seed);
 
-    // 1. Linear Gradient Base (Random Angle)
     const angle = (rng() * 360) * (Math.PI / 180);
     const diag = Math.sqrt(width*width + height*height);
     const cx = width/2;
@@ -302,10 +306,7 @@ const drawPsychedelicField = (
     ctx.globalCompositeOperation = 'source-over';
 };
 
-// ... Include Renderers ...
-// To save space, assume the render functions (renderLiquidWave, renderLinearPrism, renderDataMosh, renderFluidDisplacement, renderLinearMoire, renderGlassRefraction) 
-// are unchanged from the previous efficient state, I will just call them in the aggregator.
-// RE-IMPLEMENTING THEM BRIEFLY for completeness as requested.
+// --- EFFECT RENDERERS ---
 
 const renderLiquidWave = (ctx: CanvasRenderingContext2D, width: number, height: number, distortion: number, scale: number, seed: number) => {
     const imageData = ctx.getImageData(0, 0, width, height);
@@ -335,13 +336,6 @@ const renderLiquidWave = (ctx: CanvasRenderingContext2D, width: number, height: 
     ctx.putImageData(output, 0, 0);
 };
 
-// ... Skipping deep reimplementation of others for brevity, relying on context ... 
-// (In a real update, I would include the full bodies. I'll include just the changed export functions below 
-// and assume the helper renderers are present in the file scope as they were in the previous turn).
-// ACTUALLY, I must provide full file content or valid replacement. I will include placeholders for the other renderers to keep file valid if I was editing, 
-// but since I am providing the FULL file content in XML, I must include them.
-
-// -- FULL RENDERERS --
 const renderLinearPrism = (ctx: CanvasRenderingContext2D, width: number, height: number, distortion: number, spectra: number, seed: number) => {
     const temp = document.createElement('canvas'); temp.width=width; temp.height=height;
     temp.getContext('2d')?.drawImage(ctx.canvas,0,0);
@@ -425,6 +419,177 @@ const renderGlassRefraction = (ctx: CanvasRenderingContext2D, width: number, hei
     ctx.putImageData(output,0,0);
 };
 
+// --- NEW RENDERERS (V2) ---
+
+const renderKaleidoscope = (ctx: CanvasRenderingContext2D, width: number, height: number, distortion: number, scale: number) => {
+    // 1. Capture current state
+    const temp = document.createElement('canvas'); 
+    temp.width = width; temp.height = height;
+    temp.getContext('2d')?.drawImage(ctx.canvas, 0, 0);
+
+    // 2. Clear and prepare kaleidoscope
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, width, height);
+
+    const segments = 4 + Math.floor((scale / 100) * 12);
+    const angleStep = (Math.PI * 2) / segments;
+    const cx = width / 2;
+    const cy = height / 2;
+    const radius = Math.sqrt(cx * cx + cy * cy);
+    const rotOffset = (distortion / 100) * Math.PI;
+
+    for (let i = 0; i < segments; i++) {
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(i * angleStep + rotOffset);
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.arc(0, 0, radius, -angleStep / 2 - 0.01, angleStep / 2 + 0.01);
+        ctx.closePath();
+        ctx.clip();
+        
+        // Mirror every other segment
+        if (i % 2 === 1) {
+            ctx.scale(-1, 1);
+        }
+        
+        // Draw the source image into the wedge
+        // We offset it so the center of image matches center of kaleidoscope
+        ctx.rotate(-Math.PI / 2); // Orient image upwards
+        ctx.translate(-cx, -cy);
+        ctx.drawImage(temp, 0, 0);
+        
+        ctx.restore();
+    }
+};
+
+const renderPixelate = (ctx: CanvasRenderingContext2D, width: number, height: number, distortion: number, scale: number) => {
+    const blockSize = Math.max(4, 4 + ((100 - scale) / 100) * 40 + (distortion / 100) * 20);
+    const w = Math.ceil(width / blockSize);
+    const h = Math.ceil(height / blockSize);
+    
+    // Create tiny canvas
+    const temp = document.createElement('canvas');
+    temp.width = w; temp.height = h;
+    const tCtx = temp.getContext('2d');
+    
+    if (tCtx) {
+        tCtx.imageSmoothingEnabled = false;
+        tCtx.drawImage(ctx.canvas, 0, 0, w, h);
+        
+        // Draw back scaled up
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(temp, 0, 0, width, height);
+        ctx.imageSmoothingEnabled = true; // reset
+    }
+};
+
+const renderScanline = (ctx: CanvasRenderingContext2D, width: number, height: number, distortion: number, scale: number) => {
+    const lineSize = Math.max(2, Math.floor(2 + (scale / 100) * 6));
+    const intensity = 0.2 + (distortion / 100) * 0.6;
+    
+    // Create scanline pattern
+    const temp = document.createElement('canvas');
+    temp.width = 1; temp.height = lineSize * 2;
+    const tCtx = temp.getContext('2d');
+    if (tCtx) {
+        tCtx.fillStyle = 'rgba(0,0,0,0)';
+        tCtx.fillRect(0,0,1,lineSize);
+        tCtx.fillStyle = `rgba(0,0,0,${intensity})`;
+        tCtx.fillRect(0, lineSize, 1, lineSize);
+    }
+    
+    // RGB Shift (Chromatic Aberration) based on distortion
+    if (distortion > 10) {
+        const shift = (distortion / 100) * 10;
+        const copy = document.createElement('canvas'); copy.width = width; copy.height = height;
+        copy.getContext('2d')?.drawImage(ctx.canvas, 0, 0);
+        
+        ctx.globalCompositeOperation = 'screen';
+        ctx.fillStyle = 'black'; ctx.fillRect(0,0,width,height);
+        
+        ctx.drawImage(copy, -shift, 0);
+        ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = '#f00'; ctx.fillRect(0,0,width,height);
+        
+        ctx.globalCompositeOperation = 'screen';
+        ctx.drawImage(copy, 0, 0);
+        ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = '#0f0'; ctx.fillRect(0,0,width,height);
+        
+        ctx.globalCompositeOperation = 'screen';
+        ctx.drawImage(copy, shift, 0);
+        ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = '#00f'; ctx.fillRect(0,0,width,height);
+        
+        ctx.globalCompositeOperation = 'source-over';
+    }
+
+    const pat = ctx.createPattern(temp, 'repeat');
+    if (pat) {
+        ctx.fillStyle = pat;
+        ctx.globalCompositeOperation = 'multiply';
+        ctx.fillRect(0,0,width,height);
+        ctx.globalCompositeOperation = 'source-over';
+    }
+};
+
+const renderVortex = (ctx: CanvasRenderingContext2D, width: number, height: number, distortion: number, scale: number) => {
+    // This is a heavy pixel effect, optimized by doing it on a slightly smaller buffer if distortion is high?
+    // No, keep full res for quality, but be warned of perf.
+    
+    // To save CPU, if distortion is low, skip
+    if (distortion < 5) return;
+
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const output = ctx.createImageData(width, height);
+    const d = imageData.data;
+    const o = output.data;
+    
+    const cx = width / 2;
+    const cy = height / 2;
+    const radius = Math.min(width, height) / 2;
+    const strength = (distortion / 100) * 10; // Twist amount
+    const zoom = 1 - (scale / 100) * 0.5;
+
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const dx = x - cx;
+            const dy = y - cy;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            // Only twist inside radius-ish area to save math? No, twist everything.
+            // Angle change decreases with distance from center? Or increases?
+            // Standard swirl: angle += strength * (1 - dist/radius)
+            
+            let angle = Math.atan2(dy, dx);
+            const r = dist * zoom; // Zoom effect
+            
+            // Twist
+            const delta = strength * (1 - Math.min(1, dist / radius));
+            angle += delta;
+            
+            const sx = cx + Math.cos(angle) * r;
+            const sy = cy + Math.sin(angle) * r;
+            
+            // Sample
+            const isx = Math.floor(sx);
+            const isy = Math.floor(sy);
+            
+            let idx = (y * width + x) * 4;
+            
+            if (isx >= 0 && isx < width && isy >= 0 && isy < height) {
+                const sIdx = (isy * width + isx) * 4;
+                o[idx] = d[sIdx];
+                o[idx+1] = d[sIdx+1];
+                o[idx+2] = d[sIdx+2];
+                o[idx+3] = 255;
+            } else {
+                o[idx] = 0; o[idx+1] = 0; o[idx+2] = 0; o[idx+3] = 255;
+            }
+        }
+    }
+    ctx.putImageData(output, 0, 0);
+};
+
+
 export const renderFluxToCanvas = (
     ctx: CanvasRenderingContext2D,
     width: number,
@@ -450,6 +615,10 @@ export const renderFluxToCanvas = (
         case 'turbulence': renderFluidDisplacement(ctx, width, height, distortion, scale, seed); break;
         case 'interference': renderLinearMoire(ctx, width, height, hue, distortion, scale, seed); break;
         case 'ripple': renderGlassRefraction(ctx, width, height, distortion, scale, seed); break;
+        case 'kaleido': renderKaleidoscope(ctx, width, height, distortion, scale); break;
+        case 'pixelate': renderPixelate(ctx, width, height, distortion, scale); break;
+        case 'scanline': renderScanline(ctx, width, height, distortion, scale); break;
+        case 'vortex': renderVortex(ctx, width, height, distortion, scale); break;
     }
 
     // 3. Apply Smudge (Blur) - Covers affected canvas

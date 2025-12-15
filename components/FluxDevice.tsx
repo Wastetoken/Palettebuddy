@@ -1,4 +1,5 @@
 
+
 import React, { useEffect, useRef } from 'react';
 import { Knob } from './ui/Knob';
 import { Switch } from './ui/Switch';
@@ -84,6 +85,10 @@ export const FluxDevice: React.FC<FluxDeviceProps> = (props) => {
                         {props.pattern === 'prism' && 'Directional linear chromatic aberration shift.'}
                         {props.pattern === 'turbulence' && 'Fluid dynamics flow field displacement.'}
                         {props.pattern === 'glitch' && 'Digital signal tearing and block displacement artifacting.'}
+                        {props.pattern === 'kaleido' && 'Radial multi-segment geometric mirroring symmetry.'}
+                        {props.pattern === 'pixelate' && 'Low-fidelity bit depth reduction and downsampling.'}
+                        {props.pattern === 'scanline' && 'CRT phosphor simulation with vertical sync banding.'}
+                        {props.pattern === 'vortex' && 'Gravitational rotational distortion field.'}
                     </span>
                  </p>
             </div>
