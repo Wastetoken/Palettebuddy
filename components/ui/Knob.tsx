@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import gsap from 'gsap';
+import { Tooltip } from './Tooltip';
 
 interface KnobProps {
   id: string;
@@ -11,6 +12,7 @@ interface KnobProps {
   size?: 'sm' | 'lg';
   label?: string;
   disabled?: boolean;
+  info?: string;
 }
 
 export const Knob: React.FC<KnobProps> = ({
@@ -23,6 +25,7 @@ export const Knob: React.FC<KnobProps> = ({
   size = 'lg',
   label,
   disabled = false,
+  info,
 }) => {
   const knobRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -143,7 +146,12 @@ export const Knob: React.FC<KnobProps> = ({
 
   return (
     <div className="flex flex-col items-center justify-center">
-      {label && <div className="text-[0.6rem] uppercase tracking-[0.1em] font-bold text-neutral-600 mb-3 shadow-white/50 drop-shadow-[0_1px_0_rgba(255,255,255,0.4)]">{label}</div>}
+      {label && (
+        <div className="flex items-center justify-center gap-1 mb-3">
+            <div className="text-[0.6rem] uppercase tracking-[0.1em] font-bold text-neutral-600 shadow-white/50 drop-shadow-[0_1px_0_rgba(255,255,255,0.4)]">{label}</div>
+            {info && <Tooltip text={info} />}
+        </div>
+      )}
       
       <div className={`relative ${sizeClasses}`}>
         {/* Graduation Marks Background */}

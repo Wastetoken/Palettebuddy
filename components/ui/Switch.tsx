@@ -1,6 +1,6 @@
-
 import React from 'react';
 import { playSwitch } from '../../utils/audio';
+import { Tooltip } from './Tooltip';
 
 interface SwitchProps {
   label: string;
@@ -8,9 +8,10 @@ interface SwitchProps {
   onChange: (checked: boolean) => void;
   disabled?: boolean;
   color?: 'green' | 'orange';
+  info?: string;
 }
 
-export const Switch: React.FC<SwitchProps> = ({ label, checked, onChange, disabled, color = 'green' }) => {
+export const Switch: React.FC<SwitchProps> = ({ label, checked, onChange, disabled, color = 'green', info }) => {
   const handleClick = () => {
     if (disabled) return;
     playSwitch();
@@ -22,7 +23,10 @@ export const Switch: React.FC<SwitchProps> = ({ label, checked, onChange, disabl
 
   return (
     <div className="flex flex-col items-center justify-center gap-3">
-      <div className="text-[0.6rem] uppercase tracking-widest text-neutral-500 font-bold text-shadow-white">{label}</div>
+      <div className="flex items-center justify-center gap-1">
+         <div className="text-[0.6rem] uppercase tracking-widest text-neutral-500 font-bold text-shadow-white">{label}</div>
+         {info && <Tooltip text={info} />}
+      </div>
       <button
         onClick={handleClick}
         disabled={disabled}

@@ -1,9 +1,8 @@
-
-
 import React, { useEffect, useRef } from 'react';
 import { Knob } from './ui/Knob';
 import { Switch } from './ui/Switch';
 import { Slider } from './ui/Slider';
+import { Tooltip } from './ui/Tooltip';
 import { FluxPattern } from '../utils/canvas';
 import gsap from 'gsap';
 
@@ -99,52 +98,136 @@ export const FluxDevice: React.FC<FluxDeviceProps> = (props) => {
              <div className="absolute inset-0 border border-orange-900/10 rounded-lg pointer-events-none bg-orange-950/5"></div>
 
              <div className="flex-1 flex flex-col items-center justify-center py-6 border-b border-orange-900/10">
-                <Knob id="flux-hue" value={props.hue} min={0} max={360} fullCircle onChange={props.onHueChange} label="WAVELENGTH" disabled={props.locked}/>
+                <Knob 
+                    id="flux-hue" 
+                    value={props.hue} 
+                    min={0} max={360} fullCircle 
+                    onChange={props.onHueChange} 
+                    label="WAVELENGTH" 
+                    disabled={props.locked}
+                    info="Sets the base color frequency for the generator. Rotates through the visible light spectrum."
+                />
              </div>
 
              <div className="grid grid-cols-2 gap-4 py-4 border-b border-orange-900/10 relative">
                  <div className="absolute top-2 left-1/2 -translate-x-1/2 text-[0.5rem] uppercase tracking-widest text-orange-700/50 font-bold">OPTICS</div>
-                 <Knob id="flux-spectra" value={props.spectra} min={0} max={100} onChange={props.onSpectraChange} size="sm" label="PRISM" disabled={props.locked}/>
-                 <Knob id="flux-distortion" value={props.distortion} min={0} max={100} onChange={props.onDistortionChange} size="sm" label="TURBULENCE" disabled={props.locked}/>
+                 <Knob 
+                    id="flux-spectra" 
+                    value={props.spectra} 
+                    min={0} max={100} 
+                    onChange={props.onSpectraChange} 
+                    size="sm" 
+                    label="PRISM" 
+                    disabled={props.locked}
+                    info="Controls chromatic aberration intensity, splitting the light into RGB components."
+                />
+                 <Knob 
+                    id="flux-distortion" 
+                    value={props.distortion} 
+                    min={0} max={100} 
+                    onChange={props.onDistortionChange} 
+                    size="sm" 
+                    label="TURBULENCE" 
+                    disabled={props.locked}
+                    info="Warps the coordinate space, introducing chaos, twists, and fluid displacement."
+                />
              </div>
 
              <div className="flex flex-col gap-4 py-4 border-b border-orange-900/10 relative px-2">
                  <div className="absolute top-2 left-1/2 -translate-x-1/2 text-[0.5rem] uppercase tracking-widest text-orange-700/50 font-bold">EMULSION</div>
                  <div className="grid grid-cols-2 gap-4">
-                    <Knob id="flux-exposure" value={props.exposure} min={0} max={100} onChange={props.onExposureChange} size="sm" label="INTENSITY" disabled={props.locked}/>
-                    <Knob id="flux-iso" value={props.iso} min={0} max={100} onChange={props.onIsoChange} size="sm" label="SCALE" disabled={props.locked}/>
+                    <Knob 
+                        id="flux-exposure" 
+                        value={props.exposure} 
+                        min={0} max={100} 
+                        onChange={props.onExposureChange} 
+                        size="sm" 
+                        label="INTENSITY" 
+                        disabled={props.locked}
+                        info="Adjusts exposure and contrast. Low values burn the image (darker); high values bleach it (brighter)."
+                    />
+                    <Knob 
+                        id="flux-iso" 
+                        value={props.iso} 
+                        min={0} max={100} 
+                        onChange={props.onIsoChange} 
+                        size="sm" 
+                        label="SCALE" 
+                        disabled={props.locked}
+                        info="Controls the zoom level or pattern density of the generative algorithm."
+                    />
                  </div>
                  
                  <div className="grid grid-cols-2 gap-4 mt-2">
-                     <Knob id="flux-grain" value={props.grain} min={0} max={100} onChange={props.onGrainChange} size="sm" label="GRAIN" disabled={props.locked}/>
-                     <Knob id="flux-fine-grain" value={props.fineGrain} min={0} max={100} onChange={props.onFineGrainChange} size="sm" label="FINE GRAIN" disabled={props.locked}/>
+                     <Knob 
+                        id="flux-grain" 
+                        value={props.grain} 
+                        min={0} max={100} 
+                        onChange={props.onGrainChange} 
+                        size="sm" 
+                        label="GRAIN" 
+                        disabled={props.locked}
+                        info="Adds a layer of analog signal noise to texturize the output."
+                    />
+                     <Knob 
+                        id="flux-fine-grain" 
+                        value={props.fineGrain} 
+                        min={0} max={100} 
+                        onChange={props.onFineGrainChange} 
+                        size="sm" 
+                        label="FINE GRAIN" 
+                        disabled={props.locked}
+                        info="Adds high-frequency digital noise for sharpness and grit."
+                    />
                  </div>
                  
                  <div className="w-full h-px bg-orange-900/10 my-1"></div>
                  <div className="flex items-center gap-4 px-2 bg-orange-900/5 p-3 rounded">
-                     <Switch label="SMUDGE" checked={props.smudgeActive} onChange={props.onSmudgeActiveChange} disabled={props.locked} color="orange" />
+                     <Switch 
+                        label="SMUDGE" 
+                        checked={props.smudgeActive} 
+                        onChange={props.onSmudgeActiveChange} 
+                        disabled={props.locked} 
+                        color="orange" 
+                        info="Activates a blur filter to soften the generative patterns."
+                    />
                      <div className="flex-1 pt-4">
-                         <Slider value={props.smudgeFactor} min={0} max={100} onChange={props.onSmudgeFactorChange} label="SMUDGE FACTOR" disabled={!props.smudgeActive || props.locked} />
+                         <Slider 
+                            value={props.smudgeFactor} 
+                            min={0} max={100} 
+                            onChange={props.onSmudgeFactorChange} 
+                            label="SMUDGE FACTOR" 
+                            disabled={!props.smudgeActive || props.locked} 
+                            info="Controls the radius of the smudge/blur effect."
+                        />
                      </div>
                  </div>
              </div>
 
              <div className="flex-1 flex flex-col justify-center gap-4 px-4 pb-4">
                 <div className="grid grid-cols-2 gap-2">
-                    <div className="col-span-2">
+                    <div className="col-span-2 relative group">
                         <button onClick={props.onPatternChange} disabled={props.locked} className={`push-btn-flux w-full h-12 rounded bg-stone-900 text-orange-500 font-mono text-xs tracking-wider flex items-center justify-center gap-2 hover:brightness-125 active:scale-[0.98] active:translate-y-[2px] transition-all ${props.locked ? 'opacity-50' : ''}`}>
                              <div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></div>
                              PATTERN: {props.pattern.toUpperCase()}
                         </button>
+                        <div className="absolute -top-6 left-1/2 -translate-x-1/2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-50"><Tooltip text="Cycle through the 10 available generative art algorithms." /></div>
                     </div>
                     <div className="flex gap-2 col-span-2">
-                        <button onClick={props.onRandomize} disabled={props.locked} className={`push-btn-flux flex-1 h-12 rounded bg-stone-900 text-orange-500/80 font-mono text-xs tracking-wider flex items-center justify-center hover:brightness-125 hover:text-orange-400 active:scale-[0.98] active:translate-y-[2px] transition-all ${props.locked ? 'opacity-50' : ''}`}><i className="ph ph-shuffle text-xl"></i></button>
-                        <button onClick={props.onSave} disabled={props.locked} className={`push-btn-flux flex-1 h-12 rounded bg-stone-900 text-orange-500/80 font-mono text-xs tracking-wider flex items-center justify-center hover:brightness-125 hover:text-orange-400 active:scale-[0.98] active:translate-y-[2px] transition-all ${props.locked ? 'opacity-50' : ''}`}><i className="ph ph-floppy-disk text-xl"></i></button>
+                        <div className="flex-1 relative group">
+                            <button onClick={props.onRandomize} disabled={props.locked} className={`push-btn-flux w-full h-12 rounded bg-stone-900 text-orange-500/80 font-mono text-xs tracking-wider flex items-center justify-center hover:brightness-125 hover:text-orange-400 active:scale-[0.98] active:translate-y-[2px] transition-all ${props.locked ? 'opacity-50' : ''}`}><i className="ph ph-shuffle text-xl"></i></button>
+                            <div className="absolute -top-6 left-1/2 -translate-x-1/2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-50"><Tooltip text="Randomize settings." /></div>
+                        </div>
+                        <div className="flex-1 relative group">
+                            <button onClick={props.onSave} disabled={props.locked} className={`push-btn-flux w-full h-12 rounded bg-stone-900 text-orange-500/80 font-mono text-xs tracking-wider flex items-center justify-center hover:brightness-125 hover:text-orange-400 active:scale-[0.98] active:translate-y-[2px] transition-all ${props.locked ? 'opacity-50' : ''}`}><i className="ph ph-floppy-disk text-xl"></i></button>
+                            <div className="absolute -top-6 left-1/2 -translate-x-1/2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-50"><Tooltip text="Save state." /></div>
+                        </div>
                     </div>
-                    <div className="col-span-2">
+                    <div className="col-span-2 relative group">
                         <button onClick={props.onToggleLock} className="push-btn-flux w-full h-12 rounded bg-stone-900 text-orange-500 font-mono text-xs tracking-wider flex items-center justify-center gap-2 hover:brightness-125 active:scale-[0.98] active:translate-y-[2px] transition-all">
                             <div className={`w-2 h-2 rounded-full transition-all duration-300 ${props.locked ? 'bg-orange-500 shadow-[0_0_8px_rgba(255,165,0,0.8)]' : 'bg-orange-900'}`}></div>SAFETY LOCK
                         </button>
+                        <div className="absolute -top-6 left-1/2 -translate-x-1/2 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity z-50"><Tooltip text="Lock controls." /></div>
                     </div>
                 </div>
              </div>

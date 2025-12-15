@@ -1,6 +1,6 @@
-
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import gsap from 'gsap';
+import { Tooltip } from './Tooltip';
 
 interface SliderProps {
   value: number;
@@ -9,9 +9,10 @@ interface SliderProps {
   onChange: (val: number) => void;
   label?: string;
   disabled?: boolean;
+  info?: string;
 }
 
-export const Slider: React.FC<SliderProps> = ({ value, min, max, onChange, label, disabled }) => {
+export const Slider: React.FC<SliderProps> = ({ value, min, max, onChange, label, disabled, info }) => {
     const trackRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState(false);
     
@@ -74,7 +75,12 @@ export const Slider: React.FC<SliderProps> = ({ value, min, max, onChange, label
 
     return (
         <div className={`flex flex-col gap-2 w-full ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
-            {label && <div className="text-[0.6rem] uppercase tracking-widest text-neutral-500 font-bold text-shadow-white">{label}</div>}
+            {label && (
+                <div className="flex items-center gap-1">
+                    <div className="text-[0.6rem] uppercase tracking-widest text-neutral-500 font-bold text-shadow-white">{label}</div>
+                    {info && <Tooltip text={info} />}
+                </div>
+            )}
             
             <div 
                 ref={trackRef}

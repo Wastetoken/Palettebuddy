@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Lenis from '@studio-freight/lenis';
 import gsap from 'gsap';
@@ -479,13 +478,40 @@ export default function App() {
   };
 
   const copyCode = () => {
+      // Helper to generate color name for the prompt
+      const getColorName = (h: number) => {
+        if (h < 15 || h >= 345) return 'Crimson Red';
+        if (h < 45) return 'Amber Orange';
+        if (h < 75) return 'Electric Yellow';
+        if (h < 160) return 'Neon Green';
+        if (h < 210) return 'Cyan Blue';
+        if (h < 270) return 'Deep Purple';
+        if (h < 315) return 'Magenta';
+        return 'Hot Pink';
+      };
+
+      let description = "";
+      
+      if (systemMode === 'chroma') {
+          description = `Abstract gradient texture, ${gradientType} style. Primary color ${getColorName(hue)}, Secondary color ${getColorName(hueB)}. Heavy film grain (${noise}%) and vignette. Analog aesthetic.`;
+      } else {
+          description = `Generative digital art, ${fluxPattern} pattern. ${fluxDistortion > 50 ? 'Heavily distorted and chaotic' : 'Smooth and fluid'}. Dominant color ${getColorName(fluxHue)}. Features chromatic aberration and CRT scanline artifacts.`;
+      }
+
       const payload = {
+        meta: {
+            app: "CHROMA-SYS",
+            version: "3.0",
+            timestamp: new Date().toISOString(),
+            prompt_suggestion: description // Provides instructions for external AIs
+        },
         systemMode,
         chroma: { hue, sat, lum, hueB, satB, lumB, gradientType, gradientAngle, noise, fineGrain, smudgeActive, smudgeFactor, vignette, blendMode, noiseType, noiseFreq, noiseOctaves },
         flux: { 
             hue: fluxHue, spectra: fluxSpectra, exposure: fluxExposure, distortion: fluxDistortion, 
             grain: fluxGrain, fineGrain: fluxFineGrain, iso: fluxIso, pattern: fluxPattern,
-            smudgeActive: fluxSmudgeActive, smudgeFactor: fluxSmudgeFactor
+            smudgeActive: fluxSmudgeActive, smudgeFactor: fluxSmudgeFactor,
+            seed: fluxSeed
         }
       };
       navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
@@ -537,10 +563,14 @@ export default function App() {
         {/* Header / Nav */}
         <header className="p-6 border-b border-white/5 flex justify-between items-center bg-[#0a0a0a] z-30 sticky top-0 shrink-0">
              <div className="font-mono font-bold text-xl tracking-tighter cursor-hover group select-none">CHROMA<span className="text-xs align-top opacity-50 group-hover:text-green-400 transition-colors">Sys</span></div>
-             <div className="flex bg-black/50 backdrop-blur rounded-full p-1 border border-white/10 gap-1 pointer-events-auto shadow-lg">
-                <button onClick={wrapWithSound(() => setSystemMode('chroma'), playSwitch)} className={`px-4 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-widest transition-all ${systemMode === 'chroma' ? 'bg-white text-black' : 'text-neutral-500 hover:text-white'}`}>Chroma</button>
-                <button onClick={wrapWithSound(() => setSystemMode('flux'), playSwitch)} className={`px-4 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-widest transition-all ${systemMode === 'flux' ? 'bg-orange-500 text-black' : 'text-neutral-500 hover:text-orange-500'}`}>Flux</button>
+             
+             {/* Realistic Rocker Switch */}
+             <div className="flex bg-[#050505] rounded-md p-1 border border-white/10 gap-0 relative shadow-inner">
+                <div className={`absolute top-1 bottom-1 w-[48%] bg-neutral-700/50 rounded transition-all duration-300 ${systemMode === 'chroma' ? 'left-1' : 'left-[51%]'}`}></div>
+                <button onClick={wrapWithSound(() => setSystemMode('chroma'), playSwitch)} className={`relative z-10 px-4 py-1.5 rounded-sm text-[10px] font-mono font-bold uppercase tracking-widest transition-all ${systemMode === 'chroma' ? 'bg-gradient-to-t from-neutral-200 to-white text-black shadow-lg border-b-2 border-neutral-400 transform -translate-y-[1px]' : 'text-neutral-600 hover:text-neutral-400'}`}>Chroma</button>
+                <button onClick={wrapWithSound(() => setSystemMode('flux'), playSwitch)} className={`relative z-10 px-4 py-1.5 rounded-sm text-[10px] font-mono font-bold uppercase tracking-widest transition-all ${systemMode === 'flux' ? 'bg-gradient-to-t from-orange-400 to-orange-200 text-black shadow-lg border-b-2 border-orange-600 transform -translate-y-[1px]' : 'text-neutral-600 hover:text-neutral-400'}`}>Flux</button>
             </div>
+            
              <button onClick={handleShare} className="hidden lg:flex items-center gap-2 px-3 py-1 rounded border border-white/20 hover:bg-white/10 transition-colors"><i className="ph ph-share-network text-sm"></i></button>
         </header>
 
@@ -593,38 +623,52 @@ export default function App() {
 
       {/* --- MAIN: VIEWPORT / VISUALIZER --- */}
       <div className="flex-1 bg-black relative flex items-center justify-center p-4 md:p-8 overflow-hidden order-first md:order-last h-[60vh] md:h-full">
-         <div ref={viewportRef} className="relative w-full h-full max-w-[1600px] flex items-center justify-center">
+         <div ref={viewportRef} className="relative w-full h-full max-w-[1600px] flex items-center justify-center p-4">
              
-             {/* ACTIVE CANVAS AREA */}
-             <div 
-                className="relative shadow-2xl overflow-hidden ring-1 ring-white/10"
-                style={{ 
-                    width: activeCanvasDims?.w || '100%', 
-                    height: activeCanvasDims?.h || '100%',
-                    maxWidth: '100%',
-                    maxHeight: '100%',
-                    backgroundColor: '#171717'
-                }}
-             >
-                {/* --- CHROMA RENDERING LAYERS (DOM) --- */}
-                {/* We attach a REF here to manipulate styles directly for audio reactivity */}
-                <div 
-                    ref={chromaRef}
-                    className={`absolute inset-0 transition-opacity duration-500 origin-center will-change-transform ${systemMode === 'chroma' ? 'opacity-100' : 'opacity-0'}`} 
-                >
-                    <div className="absolute inset-0" style={getGradientStyle()}></div>
-                </div>
+             {/* MONITOR BEZEL FRAME */}
+             <div className="monitor-bezel w-full h-full relative flex items-center justify-center p-4 md:p-6 bg-[#1a1a1a]">
+                 {/* Decorative Screws */}
+                 <div className="absolute top-2 left-2 w-3 h-3 rounded-full bg-neutral-800 shadow-[inset_0_1px_2px_rgba(0,0,0,1)] flex items-center justify-center border border-black"><div className="w-1.5 h-0.5 bg-neutral-900 rotate-45"></div></div>
+                 <div className="absolute top-2 right-2 w-3 h-3 rounded-full bg-neutral-800 shadow-[inset_0_1px_2px_rgba(0,0,0,1)] flex items-center justify-center border border-black"><div className="w-1.5 h-0.5 bg-neutral-900 rotate-45"></div></div>
+                 <div className="absolute bottom-2 left-2 w-3 h-3 rounded-full bg-neutral-800 shadow-[inset_0_1px_2px_rgba(0,0,0,1)] flex items-center justify-center border border-black"><div className="w-1.5 h-0.5 bg-neutral-900 rotate-45"></div></div>
+                 <div className="absolute bottom-2 right-2 w-3 h-3 rounded-full bg-neutral-800 shadow-[inset_0_1px_2px_rgba(0,0,0,1)] flex items-center justify-center border border-black"><div className="w-1.5 h-0.5 bg-neutral-900 rotate-45"></div></div>
+                 
+                 {/* Branding Label */}
+                 <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 text-[0.5rem] font-mono font-bold tracking-[0.2em] text-neutral-600/50">CHROMA VISION REF-1</div>
 
-                {/* Noise & Vignette (Static overlays) */}
-                <div className={`absolute inset-0 transition-opacity duration-500 pointer-events-none ${systemMode === 'chroma' ? 'opacity-100' : 'opacity-0'}`} style={{ backgroundImage: `url("${noiseSvg}")`, opacity: noise / 100, mixBlendMode: blendMode as any }}></div>
-                <div className={`absolute inset-0 transition-opacity duration-500 pointer-events-none ${systemMode === 'chroma' ? 'opacity-100' : 'opacity-0'}`} style={{ background: 'radial-gradient(circle, transparent 50%, black 150%)', opacity: vignette / 100 }}></div>
+                 {/* SCREEN GLASS */}
+                 <div 
+                    className="relative w-full h-full overflow-hidden shadow-[inset_0_0_20px_rgba(0,0,0,1)] ring-1 ring-white/5 bg-black rounded"
+                    style={{ 
+                        width: activeCanvasDims?.w || '100%', 
+                        height: activeCanvasDims?.h || '100%',
+                        maxWidth: '100%',
+                        maxHeight: '100%'
+                    }}
+                 >
+                    {/* --- CHROMA RENDERING LAYERS (DOM) --- */}
+                    {/* We attach a REF here to manipulate styles directly for audio reactivity */}
+                    <div 
+                        ref={chromaRef}
+                        className={`absolute inset-0 transition-opacity duration-500 origin-center will-change-transform ${systemMode === 'chroma' ? 'opacity-100' : 'opacity-0'}`} 
+                    >
+                        <div className="absolute inset-0" style={getGradientStyle()}></div>
+                    </div>
 
-                {/* --- FLUX RENDERING LAYERS (CANVAS) --- */}
-                <canvas ref={fluxCanvasRef} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ${systemMode === 'flux' ? 'opacity-100' : 'opacity-0'}`} />
-                <div className={`absolute inset-0 pointer-events-none transition-opacity duration-500 ${systemMode === 'flux' ? 'opacity-100' : 'opacity-0'}`} style={{ backgroundImage: `url("${noiseSvg}")`, opacity: fluxGrain / 100, mixBlendMode: 'overlay' }}></div>
-                
-                {/* REC INDICATOR */}
-                {isGenerating && (<div className="absolute top-4 right-4 z-50 bg-red-600 text-white font-mono text-xs px-3 py-1 rounded animate-pulse shadow-lg flex items-center gap-2"><div className="w-2 h-2 bg-white rounded-full"></div>REC</div>)}
+                    {/* Noise & Vignette (Static overlays) */}
+                    <div className={`absolute inset-0 transition-opacity duration-500 pointer-events-none ${systemMode === 'chroma' ? 'opacity-100' : 'opacity-0'}`} style={{ backgroundImage: `url("${noiseSvg}")`, opacity: noise / 100, mixBlendMode: blendMode as any }}></div>
+                    <div className={`absolute inset-0 transition-opacity duration-500 pointer-events-none ${systemMode === 'chroma' ? 'opacity-100' : 'opacity-0'}`} style={{ background: 'radial-gradient(circle, transparent 50%, black 150%)', opacity: vignette / 100 }}></div>
+
+                    {/* --- FLUX RENDERING LAYERS (CANVAS) --- */}
+                    <canvas ref={fluxCanvasRef} className={`absolute inset-0 w-full h-full object-contain transition-opacity duration-500 ${systemMode === 'flux' ? 'opacity-100' : 'opacity-0'}`} />
+                    <div className={`absolute inset-0 pointer-events-none transition-opacity duration-500 ${systemMode === 'flux' ? 'opacity-100' : 'opacity-0'}`} style={{ backgroundImage: `url("${noiseSvg}")`, opacity: fluxGrain / 100, mixBlendMode: 'overlay' }}></div>
+                    
+                    {/* Screen Glare Overlay */}
+                    <div className="absolute inset-0 bg-gradient-to-tr from-white/0 via-white/0 to-white/5 pointer-events-none"></div>
+
+                    {/* REC INDICATOR */}
+                    {isGenerating && (<div className="absolute top-4 right-4 z-50 bg-red-600 text-white font-mono text-xs px-3 py-1 rounded animate-pulse shadow-lg flex items-center gap-2"><div className="w-2 h-2 bg-white rounded-full"></div>REC</div>)}
+                 </div>
              </div>
          </div>
       </div>
@@ -672,7 +716,8 @@ export default function App() {
                           flux: { 
                               hue: fluxHue, spectra: fluxSpectra, exposure: fluxExposure, distortion: fluxDistortion, 
                               grain: fluxGrain, fineGrain: fluxFineGrain, iso: fluxIso, pattern: fluxPattern,
-                              smudgeActive: fluxSmudgeActive, smudgeFactor: fluxSmudgeFactor
+                              smudgeActive: fluxSmudgeActive, smudgeFactor: fluxSmudgeFactor,
+                              seed: fluxSeed
                           }
                       }, null, 2)}</pre>
                    </div>
