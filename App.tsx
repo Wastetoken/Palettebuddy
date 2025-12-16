@@ -445,6 +445,7 @@ export default function App() {
                 img.onload = () => {
                     setImgDims({w: img.width, h: img.height});
                     setBgImage(evt.target!.result as string); 
+                    setGradientType('linear');
                     playSwitch(); 
                 };
                 img.src = evt.target!.result as string;
